@@ -5,7 +5,15 @@ on:
     branches:
       - main
       - 'fcmp\+\+'
+    paths:
+      - "crypto/**"
+      - "monero-oxide/**"
+
   pull_request:
+    paths:
+      - "crypto/**"
+      - "monero-oxide/**"
+
   workflow_dispatch:
 
 jobs:
