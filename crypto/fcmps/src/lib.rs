@@ -5,7 +5,7 @@
 #![allow(non_snake_case)]
 
 use core::{marker::PhantomData, borrow::Borrow};
-use std_shims::{vec, vec::Vec, io};
+use std_shims::{prelude::*, io};
 
 use rand_core::{RngCore, CryptoRng};
 use zeroize::{Zeroize, Zeroizing};
