@@ -17,7 +17,7 @@ use crate::{
   gadgets::{DiscreteLogParameters, Divisor, PointWithDlog},
 };
 
-const COMMITMENT_WORD_LEN: usize = 128;
+pub(crate) const COMMITMENT_WORD_LEN: usize = 128;
 
 /// The variables used for elements in Vector Commitments.
 pub(crate) struct VectorCommitmentTape<F: Zeroize + PrimeFieldBits> {

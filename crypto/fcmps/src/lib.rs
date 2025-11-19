@@ -260,70 +260,34 @@ where
       }
     }
 
-    let mut c1_tape = VectorCommitmentTape::<<C::C1 as Ciphersuite>::F> {
-      commitment_len: c1_padded_pow_2,
-      current_j_offset: 0,
-      commitments: Vec::with_capacity(inputs * layers),
-      branch_lengths: Vec::with_capacity(inputs * layers / 2),
-    };
-    let mut c1_branches = Vec::with_capacity((layers / 2) + (layers % 2));
-    let mut c2_tape = VectorCommitmentTape::<<C::C2 as Ciphersuite>::F> {
-      commitment_len: c2_padded_pow_2,
-      current_j_offset: 0,
-      commitments: Vec::with_capacity(inputs * layers),
-      branch_lengths: Vec::with_capacity(inputs * layers / 2),
-    };
-    let mut c2_branches = Vec::with_capacity(layers / 2);
+    let c1_branches = inputs * ((layers / 2) + (layers % 2));
+    let c2_branches = inputs * (layers / 2);
 
-    for _ in 0 .. inputs {
-      for i in 0 .. (layers - 1) {
-        if (i % 2) == 0 {
-          c1_branches.push(
-            c1_tape.append_branch(if i == 0 { 6 * LAYER_ONE_LEN } else { LAYER_ONE_LEN }, None),
-          );
-        } else {
-          c2_branches.push(c2_tape.append_branch(LAYER_TWO_LEN, None));
-        }
-      }
+    const WORDS_PER_DLOG: usize = 2;
+    const WORDS_PER_DIVISOR: usize = 2;
+    const WORDS_PER_CLAIMED_POINT: usize = WORDS_PER_DLOG + WORDS_PER_DIVISOR;
+
+    let c1_words = (inputs * (WORDS_PER_DIVISOR + (4 * WORDS_PER_CLAIMED_POINT))) +
+      (c1_branches.saturating_sub(inputs) * WORDS_PER_CLAIMED_POINT);
+    let c2_words = c2_branches * WORDS_PER_CLAIMED_POINT;
+
+    {
+      let c1_commitments = c1_branches + (c1_words * COMMITMENT_WORD_LEN).div_ceil(c1_padded_pow_2);
+      let ni = 2 + (2 * (c1_commitments / 2));
+      let l_r_poly_len = 1 + ni + 1;
+      let t_poly_len = (2 * l_r_poly_len) - 1;
+      let t_commitments = t_poly_len - 1;
+      proof_elements += c1_commitments + t_commitments;
     }
 
-    if (layers % 2) == 1 {
-      c1_tape.append_branch(if layers == 1 { 6 * LAYER_ONE_LEN } else { LAYER_ONE_LEN }, None);
-    } else {
-      c2_tape.append_branch(LAYER_TWO_LEN, None);
+    {
+      let c2_commitments = c2_branches + (c2_words * COMMITMENT_WORD_LEN).div_ceil(c2_padded_pow_2);
+      let ni = 2 + (2 * (c2_commitments / 2));
+      let l_r_poly_len = 1 + ni + 1;
+      let t_poly_len = (2 * l_r_poly_len) - 1;
+      let t_commitments = t_poly_len - 1;
+      proof_elements += c2_commitments + t_commitments;
     }
-
-    for _ in 0 .. inputs {
-      c1_tape.append_claimed_point::<C::OcParameters>(None, None, None, None);
-      c1_tape.append_claimed_point::<C::OcParameters>(None, None, None, None);
-      c1_tape.append_divisor::<C::OcParameters>(None, None);
-      c1_tape.append_claimed_point::<C::OcParameters>(None, None, None, None);
-      c1_tape.append_claimed_point::<C::OcParameters>(None, None, None, None);
-    }
-
-    for _ in 0 .. (if c1_branches.is_empty() {
-      0
-    } else {
-      (c1_branches.len() - inputs) + (inputs * (layers % 2))
-    }) {
-      c1_tape.append_claimed_point::<C::C2Parameters>(None, None, None, None);
-    }
-
-    for _ in 0 .. (c2_branches.len() + (inputs * usize::from((layers % 2) == 0))) {
-      c2_tape.append_claimed_point::<C::C1Parameters>(None, None, None, None);
-    }
-
-    let ni = 2 + (2 * (c1_tape.commitments.len() / 2));
-    let l_r_poly_len = 1 + ni + 1;
-    let t_poly_len = (2 * l_r_poly_len) - 1;
-    let t_commitments = t_poly_len - 1;
-    proof_elements += c1_tape.commitments.len() + t_commitments;
-
-    let ni = 2 + (2 * (c2_tape.commitments.len() / 2));
-    let l_r_poly_len = 1 + ni + 1;
-    let t_poly_len = (2 * l_r_poly_len) - 1;
-    let t_commitments = t_poly_len - 1;
-    proof_elements += c2_tape.commitments.len() + t_commitments;
 
     // This assumes 32 bytes per proof element, then 64 bytes for the PoK
     (32 * proof_elements) + 64
