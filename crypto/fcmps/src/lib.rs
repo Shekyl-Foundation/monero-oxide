@@ -237,7 +237,7 @@ where
 {
   /// The proof size for a FCMP proving for so many inputs in a tree with so many layers.
   ///
-  /// This is not as fast as presumable and should have its results cached.
+  /// This assumes points and scalars are each encoded as 32 bytes for all relevant curves.
   pub fn proof_size(inputs: usize, layers: usize) -> usize {
     let mut proof_elements = 16; // AI, AO, AS, tau_x, u, t_caret, a, b for each BP
 
@@ -260,16 +260,18 @@ where
       }
     }
 
-    let c1_branches = inputs * ((layers / 2) + (layers % 2));
-    let c2_branches = inputs * (layers / 2);
+    let c1_root = layers % 2;
+    let c2_root = 1 - c1_root;
+    let c1_branches = (inputs * (layers / 2)) + c1_root;
+    let c2_branches = (inputs * ((layers / 2) - c2_root)) + c2_root;
 
     const WORDS_PER_DLOG: usize = 2;
     const WORDS_PER_DIVISOR: usize = 2;
     const WORDS_PER_CLAIMED_POINT: usize = WORDS_PER_DLOG + WORDS_PER_DIVISOR;
 
     let c1_words = (inputs * (WORDS_PER_DIVISOR + (4 * WORDS_PER_CLAIMED_POINT))) +
-      (c1_branches.saturating_sub(inputs) * WORDS_PER_CLAIMED_POINT);
-    let c2_words = c2_branches * WORDS_PER_CLAIMED_POINT;
+      ((inputs * ((layers - 1) / 2)) * WORDS_PER_CLAIMED_POINT);
+    let c2_words = (inputs * (layers / 2)) * WORDS_PER_CLAIMED_POINT;
 
     {
       let c1_commitments = c1_branches + (c1_words * COMMITMENT_WORD_LEN).div_ceil(c1_padded_pow_2);
