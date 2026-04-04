@@ -6,11 +6,11 @@ use core::{
 };
 
 use subtle::*;
-use zeroize::{DefaultIsZeroes, Zeroize};
+use zeroize::{DefaultIsZeroes, Zeroize as _};
 
 use rand_core::RngCore;
 
-use crypto_bigint::{Encoding, Word, Limb, U128, U256};
+use crypto_bigint::{Encoding as _, Word, Limb, U128, U256};
 
 use group::ff::{Field, FieldBits, PrimeField, PrimeFieldBits, FromUniformBytes};
 
@@ -381,6 +381,8 @@ impl HelioseleneField {
   }
 
   /// Perform an exponentation.
+  #[allow(clippy::same_name_method)]
+  #[must_use]
   pub fn pow(&self, exp: Self) -> Self {
     let mut table = [Self::ONE; 16];
     table[1] = *self;
@@ -756,6 +758,7 @@ impl PrimeField for HelioseleneField {
   }
 
   fn is_odd(&self) -> Choice {
+    #[allow(clippy::as_conversions)]
     Choice::from((self.0.as_limbs()[0].0 & 1) as u8)
   }
 }
@@ -821,7 +824,7 @@ mod tests_assuming_64_bits {
 
   #[test]
   fn test_wide_reduction() {
-    use crypto_bigint::Random;
+    use crypto_bigint::Random as _;
     for _ in 0 .. 1000 {
       let to_reduce = crypto_bigint::U512::random(&mut rand_core::OsRng);
       let reduced = to_reduce.checked_rem(&lo_hi_concat(&MODULUS, &U256::ZERO)).unwrap();

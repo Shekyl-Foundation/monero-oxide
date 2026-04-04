@@ -7,7 +7,7 @@ use std_shims::{vec, vec::Vec};
 use generic_array::typenum::{Sum, Diff, Quot, U1, U2};
 
 use ciphersuite::{
-  group::ff::{Field, PrimeField, BatchInverter, FromUniformBytes},
+  group::ff::{Field as _, PrimeField, BatchInverter, FromUniformBytes},
   Ciphersuite,
 };
 
@@ -419,7 +419,7 @@ where
     // mmadd-1998-cmo
     fn incomplete_add<F: PrimeField>(x1: F, y1: F, x2: F, y2: F) -> Option<(F, F)> {
       if x1 == x2 {
-        None?
+        None?;
       }
 
       let u = y2 - y1;
@@ -472,9 +472,7 @@ where
     }
     for challenge_inversion in &inversions {
       // This should be unreachable barring negligible probability
-      if challenge_inversion.is_zero().into() {
-        panic!("trying to invert 0");
-      }
+      assert!(!bool::from(challenge_inversion.is_zero()), "trying to invert 0");
     }
     let mut scratch = vec![C::F::ZERO; inversions.len()];
     let _ = BatchInverter::invert_with_external_scratch(&mut inversions, &mut scratch);

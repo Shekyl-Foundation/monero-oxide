@@ -1,7 +1,7 @@
 use rand_core::OsRng;
 
 use multiexp::BatchVerifier;
-use ciphersuite::group::Group;
+use ciphersuite::group::Group as _;
 use dalek_ff_group::{Scalar, EdwardsPoint};
 
 use crate::{T, Output, sal::*};

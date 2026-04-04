@@ -1,9 +1,9 @@
 use rand_core::OsRng;
 
-use transcript::{Transcript, RecommendedTranscript};
+use transcript::{Transcript as _, RecommendedTranscript};
 
 use multiexp::BatchVerifier;
-use ciphersuite::group::Group;
+use ciphersuite::group::Group as _;
 use dalek_ff_group::{Scalar, EdwardsPoint};
 
 use modular_frost::tests::{key_gen, algorithm_machines, sign};
@@ -36,6 +36,7 @@ fn test_sal_multisig() {
     x,
   );
 
+  #[allow(clippy::iter_over_hash_type)]
   for keys in keys.values_mut() {
     let new_keys = keys.clone().offset(-rerandomized_output.o_blind());
     *keys = new_keys;

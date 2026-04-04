@@ -11,7 +11,7 @@ use generalized_bulletproofs::{
 };
 pub(crate) use generalized_bulletproofs::arithmetic_circuit_proof::{Variable, LinComb};
 
-use generalized_bulletproofs_circuit_abstraction::{Circuit as UnderlyingCircuit};
+use generalized_bulletproofs_circuit_abstraction::Circuit as UnderlyingCircuit;
 pub(crate) use generalized_bulletproofs_circuit_abstraction::Transcript;
 
 use crate::*;
@@ -71,7 +71,7 @@ impl<C: Ciphersuite> Circuit<C> {
   }
 
   pub(crate) fn constrain_equal_to_zero(&mut self, lincomb: LinComb<C::F>) {
-    self.0.constrain_equal_to_zero(lincomb)
+    self.0.constrain_equal_to_zero(lincomb);
   }
 }
 

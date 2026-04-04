@@ -1,7 +1,7 @@
-use core::{ops::Deref, fmt::Debug};
+use core::{ops::Deref as _, fmt::Debug};
 use std_shims::{io, collections::HashMap};
 
-use rand_core::{RngCore, CryptoRng, SeedableRng};
+use rand_core::{RngCore, CryptoRng, SeedableRng as _};
 use rand_chacha::ChaCha20Rng;
 
 use zeroize::{Zeroize, Zeroizing};
@@ -11,8 +11,8 @@ use transcript::{Transcript, RecommendedTranscript};
 use dalek_ff_group::{Scalar, EdwardsPoint, Ed25519};
 use ciphersuite::{
   group::{
-    ff::{Field, PrimeField},
-    Group, GroupEncoding,
+    ff::{Field as _, PrimeField as _},
+    Group as _, GroupEncoding as _,
   },
   Ciphersuite,
 };
@@ -314,7 +314,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     let s_alpha = sum;
     let s_z = *r_z + (self.rerandomized_output.r_i * s_alpha);
     let sig =
-      SpendAuthAndLinkability { P, A, B, R_O, R_P, R_L, s_alpha, s_beta, s_delta, s_z, s_y, s_r_p };
+      SpendAuthAndLinkability { P, A, B, R_O, R_P, R_L, s_alpha, s_beta, s_delta, s_y, s_z, s_r_p };
 
     let mut verifier = multiexp::BatchVerifier::new(4);
     // Use the internal RNG for this

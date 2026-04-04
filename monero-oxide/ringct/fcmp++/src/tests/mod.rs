@@ -5,11 +5,11 @@ use rand_core::OsRng;
 use multiexp::multiexp_vartime;
 use dalek_ff_group::{Scalar, EdwardsPoint, Ed25519};
 use ciphersuite::{
-  group::{Group, GroupEncoding},
+  group::{Group as _, GroupEncoding as _},
   Ciphersuite,
 };
 use helioselene::{Selene, Helios};
-use ec_divisors::{DivisorCurve, ScalarDecomposition};
+use ec_divisors::{DivisorCurve as _, ScalarDecomposition};
 
 use monero_fcmp_plus_plus_generators::{FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
 

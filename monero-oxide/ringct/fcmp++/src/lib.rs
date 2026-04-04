@@ -11,11 +11,11 @@ use zeroize::Zeroize;
 
 use generic_array::typenum::U;
 
-use blake2::{Digest, Blake2b512};
+use blake2::{Digest as _, Blake2b512};
 
 use dalek_ff_group::{EdwardsPoint, Ed25519};
 use ciphersuite::{
-  group::{ff::PrimeField, GroupEncoding},
+  group::{ff::PrimeField, GroupEncoding as _},
   Ciphersuite,
 };
 use helioselene::{Selene, Helios};
@@ -40,6 +40,7 @@ mod tests;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Ed25519Params;
 impl DiscreteLogParameter for Ed25519Params {
+  #[allow(clippy::as_conversions)]
   type ScalarBits = U<{ <<Ed25519 as Ciphersuite>::F as PrimeField>::NUM_BITS as usize }>;
 }
 
@@ -47,6 +48,7 @@ impl DiscreteLogParameter for Ed25519Params {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SeleneParams;
 impl DiscreteLogParameter for SeleneParams {
+  #[allow(clippy::as_conversions)]
   type ScalarBits = U<{ <<Selene as Ciphersuite>::F as PrimeField>::NUM_BITS as usize }>;
 }
 
@@ -54,6 +56,7 @@ impl DiscreteLogParameter for SeleneParams {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HeliosParams;
 impl DiscreteLogParameter for HeliosParams {
+  #[allow(clippy::as_conversions)]
   type ScalarBits = U<{ <<Helios as Ciphersuite>::F as PrimeField>::NUM_BITS as usize }>;
 }
 

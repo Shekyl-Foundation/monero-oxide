@@ -1,9 +1,9 @@
 use rand_core::OsRng;
 
-use transcript::{Transcript, RecommendedTranscript};
+use transcript::{Transcript as _, RecommendedTranscript};
 
 use multiexp::BatchVerifier;
-use ciphersuite::group::Group;
+use ciphersuite::group::Group as _;
 use dalek_ff_group::{Scalar, EdwardsPoint};
 
 use modular_frost::{

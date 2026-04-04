@@ -9,7 +9,7 @@ use std_shims::{vec, vec::Vec};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use ciphersuite::{
-  group::ff::{Field, FromUniformBytes},
+  group::ff::{Field as _, FromUniformBytes},
   Ciphersuite,
 };
 
@@ -142,6 +142,7 @@ impl<C: Ciphersuite> Circuit<C> {
   ///
   /// May panic if any linear combinations reference non-existent terms or if the witness isn't
   /// provided when proving/is provided when verifying.
+  #[allow(clippy::many_single_char_names)]
   pub fn mul(
     &mut self,
     a: Option<LinComb<C::F>>,

@@ -511,6 +511,7 @@ dependencies = [
  "multiexp",
  "rand_core",
  "std-shims",
+ "subtle",
  "zeroize",
 ]
 

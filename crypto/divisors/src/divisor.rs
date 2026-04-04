@@ -2,7 +2,7 @@ use core::ops::Div;
 use std_shims::{vec, vec::Vec};
 
 use subtle::{Choice, ConditionallySelectable, CtOption};
-use ff::{PrimeField, BatchInvert};
+use ff::{PrimeField, BatchInvert as _};
 
 use crate::barycentric::Interpolator;
 
@@ -40,6 +40,7 @@ impl<F: PrimeField> Evals<F> {
   }
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SmallDivisor<F: PrimeField> {
   x_coefficient: F,

@@ -3,7 +3,7 @@ use rand_core::OsRng;
 use generic_array::typenum::U;
 
 use multiexp::multiexp_vartime;
-use ciphersuite::{group::Group, Ciphersuite};
+use ciphersuite::{group::Group as _, Ciphersuite};
 use dalek_ff_group::Ed25519;
 use helioselene::{Selene, Helios};
 use ec_divisors::ScalarDecomposition;
@@ -12,16 +12,19 @@ use crate::{*, tree::hash_grow};
 
 struct Ed25519Params;
 impl DiscreteLogParameter for Ed25519Params {
+  #[allow(clippy::as_conversions)]
   type ScalarBits = U<{ <<Ed25519 as Ciphersuite>::F as PrimeField>::NUM_BITS as usize }>;
 }
 
 struct SeleneParams;
 impl DiscreteLogParameter for SeleneParams {
+  #[allow(clippy::as_conversions)]
   type ScalarBits = U<{ <<Selene as Ciphersuite>::F as PrimeField>::NUM_BITS as usize }>;
 }
 
 struct HeliosParams;
 impl DiscreteLogParameter for HeliosParams {
+  #[allow(clippy::as_conversions)]
   type ScalarBits = U<{ <<Helios as Ciphersuite>::F as PrimeField>::NUM_BITS as usize }>;
 }
 
@@ -416,10 +419,10 @@ fn random_paths(
     }
     match root {
       TreeRoot::C1(root) => {
-        assert_eq!(<Selene as Ciphersuite>::G::to_xy(root).unwrap().0, c1_hash.unwrap())
+        assert_eq!(<Selene as Ciphersuite>::G::to_xy(root).unwrap().0, c1_hash.unwrap());
       }
       TreeRoot::C2(root) => {
-        assert_eq!(<Helios as Ciphersuite>::G::to_xy(root).unwrap().0, c2_hash.unwrap())
+        assert_eq!(<Helios as Ciphersuite>::G::to_xy(root).unwrap().0, c2_hash.unwrap());
       }
     }
   }
@@ -516,7 +519,7 @@ fn verify_fn(
 
     times.push(instant.elapsed().as_millis());
   }
-  times.sort();
+  times.sort_unstable();
   println!("Median time to verify {batch} proof(s) was {}ms (n={iters})", times[times.len() / 2]);
 }
 

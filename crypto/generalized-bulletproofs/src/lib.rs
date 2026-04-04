@@ -8,10 +8,11 @@ use core::fmt;
 use std_shims::{vec, vec::Vec, collections::HashSet};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
+use subtle::ConditionallySelectable;
 
 use multiexp::{multiexp, multiexp_vartime};
 use ciphersuite::{
-  group::{ff::Field, Group, GroupEncoding},
+  group::{ff::Field as _, Group as _, GroupEncoding as _},
   Ciphersuite,
 };
 
@@ -263,7 +264,7 @@ impl<C: Ciphersuite> Generators<C> {
   }
 }
 
-impl<'a, C: Ciphersuite> ProofGenerators<'a, C> {
+impl<C: Ciphersuite> ProofGenerators<'_, C> {
   pub(crate) fn len(&self) -> usize {
     self.g_bold.len()
   }
@@ -304,7 +305,10 @@ pub struct PedersenCommitment<C: Ciphersuite> {
 
 impl<C: Ciphersuite> PedersenCommitment<C> {
   /// Commit to this value, yielding the Pedersen commitment.
-  pub fn commit(&self, g: C::G, h: C::G) -> C::G {
+  pub fn commit(&self, g: C::G, h: C::G) -> C::G
+  where
+    C::G: ConditionallySelectable,
+  {
     multiexp(&[(self.value, g), (self.mask, h)])
   }
 }
@@ -326,7 +330,7 @@ impl<C: Ciphersuite> PedersenVectorCommitment<C> {
   pub fn commit(&self, g_bold: &[C::G], h: C::G) -> Option<C::G> {
     if g_bold.len() < self.g_values.len() {
       None?;
-    };
+    }
 
     let mut terms = vec![(self.mask, h)];
     for pair in self.g_values.iter().copied().zip(g_bold.iter().copied()) {

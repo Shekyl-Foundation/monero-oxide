@@ -4,7 +4,7 @@
 
 use core::hint::black_box;
 
-use zeroize::Zeroize;
+use zeroize::Zeroize as _;
 
 pub use group;
 

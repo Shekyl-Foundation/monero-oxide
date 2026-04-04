@@ -11,13 +11,13 @@ use rand_core::{RngCore, CryptoRng};
 use zeroize::{Zeroize, Zeroizing};
 
 use blake2::{
-  digest::{consts::U32, Digest},
+  digest::{consts::U32, Digest as _},
   Blake2b,
 };
 
 use ciphersuite::{
   group::{
-    ff::{Field, PrimeField, FromUniformBytes},
+    ff::{Field as _, PrimeField, FromUniformBytes},
     Group, GroupEncoding,
   },
   Ciphersuite,
@@ -192,11 +192,18 @@ impl From<AcVerifyError> for FcmpError {
 }
 
 /// The full-chain membership proof.
-#[derive(Clone, Debug, Zeroize)]
+#[derive(Clone, Debug)]
 pub struct Fcmp<C> {
   _curves: PhantomData<C>,
   proof: Vec<u8>,
   root_blind_pok: [u8; 64],
+}
+impl<C> Zeroize for Fcmp<C> {
+  fn zeroize(&mut self) {
+    let Self { _curves: PhantomData, proof, root_blind_pok } = self;
+    proof.zeroize();
+    root_blind_pok.zeroize();
+  }
 }
 
 impl<C> Fcmp<C> {
@@ -884,11 +891,13 @@ where
     // Verify the root blind PoK
     {
       let claimed_root = if (layers % 2) == 1 {
+        #[allow(clippy::wildcard_enum_match_arm)]
         TreeRoot::<C::C1, C::C2>::C1(match root[0] {
           Variable::CG { commitment: i, index: _ } => params.curve_1_hash_init + proof_1_vcs.C()[i],
           _ => panic!("branch wasn't present in a vector commitment"),
         })
       } else {
+        #[allow(clippy::wildcard_enum_match_arm)]
         TreeRoot::<C::C1, C::C2>::C2(match root[0] {
           Variable::CG { commitment: i, index: _ } => params.curve_2_hash_init + proof_2_vcs.C()[i],
           _ => panic!("branch wasn't present in a vector commitment"),

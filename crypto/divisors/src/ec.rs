@@ -1,9 +1,11 @@
+#![allow(clippy::many_single_char_names)]
+
 use core::ops::{Add, Neg};
 use std_shims::vec::Vec;
 
 use zeroize::Zeroize;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
-use ff::{Field, BatchInvert};
+use ff::{Field, BatchInvert as _};
 
 use crate::DivisorCurve;
 
@@ -26,6 +28,7 @@ pub trait XyPoint<F: Field>:
   /// If this point is the identity.
   fn is_identity(&self) -> Choice;
   /// Double the point.
+  #[must_use]
   fn double(self) -> Self;
   /// Convert a list of points to their affine coordinates.
   ///
@@ -171,11 +174,11 @@ impl<C: DivisorCurve> XyPoint<C::FieldElement> for Projective<C> {
 
 #[cfg(test)]
 mod ed25519_test {
-  use group::{ff::Field, Group};
+  use group::{ff::Field as _, Group as _};
   use dalek_ff_group::{FieldElement, EdwardsPoint};
   use crate::{
-    ec::{Projective, XyPoint},
-    DivisorCurve,
+    ec::{Projective, XyPoint as _},
+    DivisorCurve as _,
   };
 
   #[test]

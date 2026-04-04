@@ -154,7 +154,7 @@ impl Point {
   /// This hashes the input to produce two uniform inputs to apply the Elligator 2 map to, yielding
   /// their sum, as demonstrated to generate the entire elliptic curve with minimal bias.
   pub fn hash(bytes: [u8; 32]) -> Self {
-    use blake2::Digest;
+    use blake2::Digest as _;
     let hashed: [u8; 64] = blake2::Blake2b512::digest(bytes).into();
     Self(
       Self::elligator2_with_uniform_bytes_input(hashed[.. 32].try_into().unwrap()).0 +

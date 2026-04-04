@@ -4,16 +4,16 @@
 #![deny(missing_docs)]
 #![allow(non_snake_case)]
 
-use core::{borrow::Borrow, ops::Add};
+use core::{borrow::Borrow, ops::Add as _};
 #[allow(unused_imports)]
 use std_shims::prelude::*;
 use std_shims::{vec, vec::Vec};
 
-use subtle::{Choice, CtOption, ConditionallySelectable, ConstantTimeEq, ConstantTimeGreater};
+use subtle::{Choice, CtOption, ConditionallySelectable, ConstantTimeEq, ConstantTimeGreater as _};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use group::{
-  ff::{Field, PrimeField, PrimeFieldBits, BatchInvert},
+  ff::{Field, PrimeField, PrimeFieldBits, BatchInvert as _},
   Group,
 };
 
@@ -258,7 +258,7 @@ fn divisor_to_poly<C: DivisorCurve>(
   let x_coefficients = a[1 ..].to_vec();
   let yx_coefficients = vec![b[1 ..].to_vec()];
   let y_coefficients = vec![b[0]];
-  Some(Poly { zero_coefficient, x_coefficients, yx_coefficients, y_coefficients })
+  Some(Poly { y_coefficients, yx_coefficients, x_coefficients, zero_coefficient })
 }
 
 /// Create a divisor interpolating the following points.
@@ -531,7 +531,7 @@ impl<F: Zeroize + PrimeFieldBits> ScalarDecomposition<F> {
     let _ = usize::try_from(<C::Scalar as PrimeField>::NUM_BITS + 2)
       .expect("NUM_BITS + 2 didn't fit in usize");
     let mut divisor_points =
-      vec![C::XyPoint::IDENTITY; (<C::Scalar as PrimeField>::NUM_BITS + 1) as usize];
+      vec![C::XyPoint::IDENTITY; usize::try_from(<C::Scalar as PrimeField>::NUM_BITS + 1).unwrap()];
 
     // Write the inverse of the resulting point
     divisor_points[0] = C::XyPoint::from(-generator * self.scalar);
@@ -562,10 +562,10 @@ impl<F: Zeroize + PrimeFieldBits> ScalarDecomposition<F> {
 mod ed25519 {
   use std_shims::sync::LazyLock;
 
-  use subtle::{Choice, ConditionallySelectable};
+  use subtle::{Choice, ConditionallySelectable as _};
   use group::{
-    ff::{Field, PrimeField},
-    Group, GroupEncoding,
+    ff::{Field as _, PrimeField as _},
+    Group as _, GroupEncoding as _,
   };
 
   use dalek_ff_group::{FieldElement, EdwardsPoint};
@@ -622,9 +622,9 @@ mod ed25519 {
       let edwards_y_sq = edwards_y * edwards_y;
 
       const D: FieldElement = FieldElement::from_u256(
-        &DynResidue::new(&U256::from_u64(121665), MODULUS)
+        &DynResidue::new(&U256::from_u64(121_665), MODULUS)
           .neg()
-          .mul(&DynResidue::new(&U256::from_u64(121666), MODULUS).invert().0)
+          .mul(&DynResidue::new(&U256::from_u64(121_666), MODULUS).invert().0)
           .retrieve(),
       );
 
@@ -643,7 +643,7 @@ mod ed25519 {
       );
 
       const Y_TO_X_MAP_CONST: FieldElement = FieldElement::from_u256(
-        &DynResidue::new(&U256::from_u64(486662), MODULUS)
+        &DynResidue::new(&U256::from_u64(486_662), MODULUS)
           .mul(&DynResidue::new(&U256::from_u64(3), MODULUS).invert().0)
           .retrieve(),
       );
@@ -658,7 +658,7 @@ mod ed25519 {
         Y_TO_X_MAP_CONST;
 
       const C_SQUARE: DynResidue<{ U256::LIMBS }> =
-        DynResidue::new(&U256::from_u64(486662 + 2), MODULUS).neg();
+        DynResidue::new(&U256::from_u64(486_662 + 2), MODULUS).neg();
       const C_I: DynResidue<{ U256::LIMBS }> =
         C_SQUARE.pow(&MODULUS.modulus().wrapping_add(&U256::from_u64(3)).shr_vartime(3));
       const SQRT_M1: DynResidue<{ U256::LIMBS }> = DynResidue::new(

@@ -1,5 +1,7 @@
+//! A build script to derive the FCMP++ generators are time of compile (if enabled).
+
 use std::{
-  io::Write,
+  io::Write as _,
   env,
   path::Path,
   fs::{File, remove_file},
@@ -27,7 +29,7 @@ fn generator_set<C: NewGenerators>()
 where
   C::G: ec_divisors::DivisorCurve,
 {
-  use ciphersuite::group::ff::PrimeField;
+  use ciphersuite::group::ff::PrimeField as _;
   use ec_divisors::DivisorCurve;
 
   fn read_point(point: &str, x_str: &str, y_str: &str) -> String {

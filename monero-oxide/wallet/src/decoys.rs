@@ -238,7 +238,7 @@ async fn select_decoys<R: RngCore + CryptoRng>(
   // Form the complete ring
   let mut ring = decoys;
   ring.push((input.relative_id.index_on_blockchain, [input.key(), input.commitment().commit()]));
-  ring.sort_by(|a, b| a.0.cmp(&b.0));
+  ring.sort_by_key(|a| a.0);
 
   /*
     Monero does have sanity checks which it applies to the selected ring.

@@ -4,7 +4,7 @@ use core::{
 };
 use std_shims::{vec, vec::Vec};
 
-use ff::{Field, PrimeField, BatchInvert};
+use ff::{Field, PrimeField, BatchInvert as _};
 
 /// The coefficients for a univariate polynomial with the leading coefficient _first_.
 #[cfg_attr(test, derive(Debug, PartialEq))]

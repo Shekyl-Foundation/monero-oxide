@@ -1,10 +1,10 @@
-use core::borrow::Borrow;
+use core::borrow::Borrow as _;
 
 use rand_core::OsRng;
 
 use group::{
-  ff::{Field, PrimeField},
-  Group,
+  ff::{Field as _, PrimeField as _},
+  Group as _,
 };
 use dalek_ff_group::EdwardsPoint;
 

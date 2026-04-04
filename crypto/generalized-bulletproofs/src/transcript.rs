@@ -2,11 +2,11 @@
 use std_shims::prelude::*;
 use std_shims::{vec::Vec, io};
 
-use blake2::{Digest, Blake2b512};
+use blake2::{Digest as _, Blake2b512};
 
 use ciphersuite::{
   group::{
-    ff::{Field, PrimeField, FromUniformBytes},
+    ff::{Field as _, PrimeField, FromUniformBytes},
     GroupEncoding,
   },
   Ciphersuite,
@@ -28,9 +28,7 @@ where
   let res = C::F::from_uniform_bytes(&chl);
 
   // Negligible probability
-  if bool::from(res.is_zero()) {
-    panic!("zero challenge");
-  }
+  assert!(!bool::from(res.is_zero()), "zero challenge");
 
   res
 }
@@ -96,6 +94,7 @@ impl Transcript {
     C: Vec<C::G>,
     V: Vec<C::G>,
   ) -> Commitments<C> {
+    #[allow(clippy::as_conversions)]
     const _NO_128_BIT_PLATFORMS: [(); (u64::BITS - usize::BITS) as usize] =
       [(); (u64::BITS - usize::BITS) as usize];
     const U64_FROM_USIZE_ERR: &str =

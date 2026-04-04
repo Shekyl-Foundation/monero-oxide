@@ -55,7 +55,7 @@ fn rejection_sampling_hash_to_curve<G: PrimeGroup + GroupEncoding<Repr = [u8; 32
         return point;
       }
     }
-    buf = keccak256(&buf);
+    buf = keccak256(buf);
   }
 }
 
@@ -123,7 +123,7 @@ where
     let (g, h) = Self::g_h(&id);
 
     use std::thread;
-    use group::Group;
+    use group::Group as _;
 
     let threads = {
       let threads = thread::available_parallelism().ok()?;

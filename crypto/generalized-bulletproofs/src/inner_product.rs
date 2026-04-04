@@ -1,8 +1,10 @@
 use std_shims::{vec, vec::Vec};
 
+use subtle::ConditionallySelectable;
+
 use multiexp::multiexp_vartime;
 use ciphersuite::{
-  group::ff::{Field, FromUniformBytes, BatchInvert},
+  group::ff::{Field as _, FromUniformBytes, BatchInvert as _},
   Ciphersuite,
 };
 
@@ -90,9 +92,10 @@ pub(crate) enum IpProveError {
   InconsistentWitness,
 }
 
-impl<'a, C: Ciphersuite> IpStatement<'a, C>
+impl<C: Ciphersuite> IpStatement<'_, C>
 where
   C::F: FromUniformBytes<64>,
+  C::G: ConditionallySelectable,
 {
   /// Prove for this Inner-Product statement.
   ///
@@ -201,11 +204,11 @@ where
 
       // The prover and verifier now calculate the following (28-31)
       g_bold = PointVector(Vec::with_capacity(g_bold1.len()));
-      for (a, b) in g_bold1.0.into_iter().zip(g_bold2.0.into_iter()) {
+      for (a, b) in g_bold1.0.into_iter().zip(g_bold2.0) {
         g_bold.0.push(multiexp_vartime(&[(x_inv, a), (x, b)]));
       }
       h_bold = PointVector(Vec::with_capacity(h_bold1.len()));
-      for (a, b) in h_bold1.0.into_iter().zip(h_bold2.0.into_iter()) {
+      for (a, b) in h_bold1.0.into_iter().zip(h_bold2.0) {
         h_bold.0.push(multiexp_vartime(&[(x, a), (x_inv, b)]));
       }
       P = (L * (x * x)) + P + (R * (x_inv * x_inv));
@@ -245,7 +248,7 @@ pub(crate) enum IpVerifyError {
   IncompleteProof,
 }
 
-impl<'a, C: Ciphersuite> IpStatement<'a, C>
+impl<C: Ciphersuite> IpStatement<'_, C>
 where
   C::F: FromUniformBytes<64>,
 {

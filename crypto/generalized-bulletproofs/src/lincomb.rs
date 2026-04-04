@@ -156,15 +156,15 @@ impl<F: PrimeField> LinComb<F> {
     match constrainable {
       Variable::aL(i) => {
         self.highest_a_index = self.highest_a_index.max(Some(i));
-        self.WL.push((i, scalar))
+        self.WL.push((i, scalar));
       }
       Variable::aR(i) => {
         self.highest_a_index = self.highest_a_index.max(Some(i));
-        self.WR.push((i, scalar))
+        self.WR.push((i, scalar));
       }
       Variable::aO(i) => {
         self.highest_a_index = self.highest_a_index.max(Some(i));
-        self.WO.push((i, scalar))
+        self.WO.push((i, scalar));
       }
       Variable::CG { commitment: i, index: j } => {
         self.highest_c_index = self.highest_c_index.max(Some(i));
@@ -177,13 +177,13 @@ impl<F: PrimeField> LinComb<F> {
         while self.WCG.len() <= i {
           self.WCG.push(vec![]);
         }
-        self.WCG[i].push((j, scalar))
+        self.WCG[i].push((j, scalar));
       }
       Variable::V(i) => {
         self.highest_v_index = self.highest_v_index.max(Some(i));
         self.WV.push((i, scalar));
       }
-    };
+    }
     self
   }
 

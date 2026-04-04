@@ -1,8 +1,10 @@
+//! A benchmark for the performance of the `helioselene`.
+
 #![allow(non_snake_case)]
 
 use rand_core::OsRng;
 use helioselene::{
-  group::{ff::Field, Group, GroupEncoding},
+  group::{ff::Field as _, Group as _, GroupEncoding as _},
   HelioseleneField, SelenePoint,
 };
 

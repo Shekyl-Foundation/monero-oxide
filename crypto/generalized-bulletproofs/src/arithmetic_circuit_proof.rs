@@ -1,12 +1,15 @@
+#![allow(clippy::many_single_char_names)]
+
 use std_shims::{vec, vec::Vec};
 
 use rand_core::{RngCore, CryptoRng};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
+use subtle::ConditionallySelectable;
 
 use multiexp::{multiexp, multiexp_vartime};
 use ciphersuite::{
-  group::ff::{Field, FromUniformBytes},
+  group::ff::{Field as _, FromUniformBytes},
   Ciphersuite,
 };
 
@@ -38,7 +41,7 @@ pub struct ArithmeticCircuitStatement<'a, C: Ciphersuite> {
   V: PointVector<C>,
 }
 
-impl<'a, C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'a, C> {
+impl<C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'_, C> {
   fn zeroize(&mut self) {
     self.constraints.zeroize();
     self.C.zeroize();
@@ -162,7 +165,7 @@ struct YzChallenges<C: Ciphersuite> {
   z: ScalarVector<C::F>,
 }
 
-impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
+impl<C: Ciphersuite> ArithmeticCircuitStatement<'_, C>
 where
   C::F: FromUniformBytes<64>,
 {
@@ -198,9 +201,10 @@ pub enum AcProveError {
   InconsistentWitness,
 }
 
-impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
+impl<C: Ciphersuite> ArithmeticCircuitStatement<'_, C>
 where
   C::F: FromUniformBytes<64>,
+  C::G: ConditionallySelectable,
 {
   /// Prove for this statement/witness.
   pub fn prove<R: RngCore + CryptoRng>(
@@ -592,9 +596,10 @@ pub enum AcVerifyError {
   IncompleteProof,
 }
 
-impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
+impl<C: Ciphersuite> ArithmeticCircuitStatement<'_, C>
 where
   C::F: FromUniformBytes<64>,
+  C::G: ConditionallySelectable,
 {
   /// Verify a proof for this statement.
   ///

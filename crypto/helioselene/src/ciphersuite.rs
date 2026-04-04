@@ -6,7 +6,7 @@ use std_shims::io::{self, Read};
 
 use zeroize::Zeroize;
 
-use blake2::{Digest, Blake2b512};
+use blake2::{Digest as _, Blake2b512};
 
 use group::Group;
 #[cfg(feature = "alloc")]
@@ -15,6 +15,7 @@ use crate::{Field25519, HelioseleneField, HeliosPoint, SelenePoint};
 
 use ciphersuite::Ciphersuite;
 
+/// The ciphersuite definition for the Helios elliptic curve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
 pub struct Helios;
 impl Ciphersuite for Helios {
@@ -40,7 +41,7 @@ impl Ciphersuite for Helios {
   }
 
   // We override the provided impl, which compares against the reserialization, because
-  // Helios::G::from_bytes already enforces canonically encoded points
+  // `<Helios::G as GroupEncoding>::from_bytes` already enforces canonically encoded points.
   #[cfg(feature = "alloc")]
   #[allow(non_snake_case)]
   fn read_G<R: Read>(reader: &mut R) -> io::Result<Self::G> {
@@ -53,6 +54,7 @@ impl Ciphersuite for Helios {
   }
 }
 
+/// The ciphersuite definition for the Selene elliptic curve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
 pub struct Selene;
 impl Ciphersuite for Selene {
@@ -78,7 +80,7 @@ impl Ciphersuite for Selene {
   }
 
   // We override the provided impl, which compares against the reserialization, because
-  // Selene::G::from_bytes already enforces canonically encoded points
+  // `<Selene::G as GroupEncoding>::from_bytes` already enforces canonically encoded points.
   #[cfg(feature = "alloc")]
   #[allow(non_snake_case)]
   fn read_G<R: Read>(reader: &mut R) -> io::Result<Self::G> {
