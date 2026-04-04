@@ -174,7 +174,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
       (T_ * *delta);
     let B = (U * (*alpha * *beta)) + (T_ * *mu);
 
-    let R_L = (self.rerandomized_output.input().I_tilde * *alpha) - (U * *r_z);
+    let R_L = (self.rerandomized_output.I_tilde * *alpha) - (U * *r_z);
 
     /*
       We have to sign:
@@ -217,14 +217,14 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
 
     let e = SpendAuthAndLinkability::challenge(
       self.signable_tx_hash,
-      &self.rerandomized_output.input,
+      &self.rerandomized_output.input(),
       self.L,
-      P,
-      A,
-      B,
-      R_O,
-      R_P,
-      R_L,
+      P.to_bytes(),
+      A.to_bytes(),
+      B.to_bytes(),
+      R_O.to_bytes(),
+      R_P.to_bytes(),
+      R_L.to_bytes(),
     );
 
     let s_alpha = *alpha + (e * self.x);
@@ -273,18 +273,32 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     } = self.partial.clone().unwrap();
     let s_y = sum;
     let s_r_p = s_r_p_pre - s_y;
-    let sig =
-      SpendAuthAndLinkability { P, A, B, R_O, R_P, R_L, s_alpha, s_beta, s_delta, s_y, s_z, s_r_p };
+    let sig = SpendAuthAndLinkability {
+      P: P.to_bytes(),
+      A: A.to_bytes(),
+      B: B.to_bytes(),
+      R_O: R_O.to_bytes(),
+      R_P: R_P.to_bytes(),
+      R_L: R_L.to_bytes(),
+      s_alpha,
+      s_beta,
+      s_delta,
+      s_y,
+      s_z,
+      s_r_p,
+    };
 
     let mut verifier = multiexp::BatchVerifier::new(4);
     // Use the internal RNG for this
-    sig.verify(
-      &mut self.rng.clone(),
-      &mut verifier,
-      self.signable_tx_hash,
-      &self.rerandomized_output.input,
-      self.L,
-    );
+    let () = sig
+      .verify(
+        &mut self.rng.clone(),
+        &mut verifier,
+        self.signable_tx_hash,
+        &self.rerandomized_output.input(),
+        self.L,
+      )
+      .ok()?;
     if verifier.verify_vartime() {
       return Some(sig);
     }
@@ -316,10 +330,10 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
 
     transcript.append_message(b"signable_tx_hash", signable_tx_hash);
 
-    transcript.append_message(b"O_tilde", rerandomized_output.input.O_tilde.to_bytes());
-    transcript.append_message(b"I_tilde", rerandomized_output.input.I_tilde.to_bytes());
-    transcript.append_message(b"R", rerandomized_output.input.R.to_bytes());
-    transcript.append_message(b"C_tilde", rerandomized_output.input.C_tilde.to_bytes());
+    transcript.append_message(b"O_tilde", rerandomized_output.O_tilde.to_bytes());
+    transcript.append_message(b"I_tilde", rerandomized_output.I_tilde.to_bytes());
+    transcript.append_message(b"C_tilde", rerandomized_output.C_tilde.to_bytes());
+    transcript.append_message(b"R", rerandomized_output.R.to_bytes());
 
     transcript.append_message(b"r_o", rerandomized_output.r_o.to_repr());
     transcript.append_message(b"r_i", rerandomized_output.r_i.to_repr());
@@ -328,7 +342,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
 
     transcript.append_message(b"x", x.to_repr());
 
-    let L = (rerandomized_output.input.I_tilde -
+    let L = (rerandomized_output.I_tilde -
       (EdwardsPoint((*FCMP_PLUS_PLUS_U).into()) * rerandomized_output.r_i)) *
       x;
 

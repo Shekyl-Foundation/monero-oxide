@@ -29,7 +29,11 @@ pub mod multisig;
 /// A re-randomized output.
 #[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct RerandomizedOutput {
-  input: Input,
+  O_tilde: <Ed25519 as Ciphersuite>::G,
+  I_tilde: <Ed25519 as Ciphersuite>::G,
+  R: <Ed25519 as Ciphersuite>::G,
+  C_tilde: <Ed25519 as Ciphersuite>::G,
+
   r_o: <Ed25519 as Ciphersuite>::F,
   r_i: <Ed25519 as Ciphersuite>::F,
   r_r_i: <Ed25519 as Ciphersuite>::F,
@@ -38,7 +42,7 @@ pub struct RerandomizedOutput {
 
 impl core::fmt::Debug for RerandomizedOutput {
   fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
-    fmt.debug_struct("RerandomizedOutput").field("input", &self.input).finish_non_exhaustive()
+    fmt.debug_struct("RerandomizedOutput").field("input", &self.input()).finish_non_exhaustive()
   }
 }
 
@@ -55,7 +59,7 @@ impl RerandomizedOutput {
     let R = (EdwardsPoint((*FCMP_PLUS_PLUS_V).into()) * r_i) + (*T * r_r_i);
     let C_tilde = output.C() + (<Ed25519 as Ciphersuite>::generator() * r_c);
 
-    RerandomizedOutput { input: Input { O_tilde, I_tilde, R, C_tilde }, r_o, r_i, r_r_i, r_c }
+    RerandomizedOutput { O_tilde, I_tilde, R, C_tilde, r_o, r_i, r_r_i, r_c }
   }
 
   /// Write a re-randomized output.
@@ -64,7 +68,11 @@ impl RerandomizedOutput {
   ///
   /// This does contain secrets which allow linking an output to the input its spent with.
   pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
-    self.input.write_full(writer)?;
+    writer.write_all(&self.O_tilde.to_bytes())?;
+    writer.write_all(&self.I_tilde.to_bytes())?;
+    writer.write_all(&self.R.to_bytes())?;
+    writer.write_all(&self.C_tilde.to_bytes())?;
+
     writer.write_all(&self.r_o.to_repr())?;
     writer.write_all(&self.r_i.to_repr())?;
     writer.write_all(&self.r_r_i.to_repr())?;
@@ -74,7 +82,11 @@ impl RerandomizedOutput {
   /// Read a re-randomized output.
   pub fn read(reader: &mut impl io::Read) -> io::Result<Self> {
     Ok(Self {
-      input: Input::read_full(reader)?,
+      O_tilde: Ed25519::read_G(reader)?,
+      I_tilde: Ed25519::read_G(reader)?,
+      R: Ed25519::read_G(reader)?,
+      C_tilde: Ed25519::read_G(reader)?,
+
       r_o: Ed25519::read_F(reader)?,
       r_i: Ed25519::read_F(reader)?,
       r_r_i: Ed25519::read_F(reader)?,
@@ -106,7 +118,12 @@ impl RerandomizedOutput {
 
   /// The input tuple produced by this output and set of rerandomizations.
   pub fn input(&self) -> Input {
-    self.input
+    Input {
+      O_tilde: self.O_tilde.to_bytes(),
+      I_tilde: self.I_tilde.to_bytes(),
+      R: self.R.to_bytes(),
+      C_tilde: self.C_tilde.to_bytes(),
+    }
   }
 }
 
@@ -115,7 +132,11 @@ impl RerandomizedOutput {
 /// This does not open C~ as it's unnecessary for the purposes of this proof.
 #[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct OpenedInputTuple {
-  input: Input,
+  O_tilde: <Ed25519 as Ciphersuite>::G,
+  I_tilde: <Ed25519 as Ciphersuite>::G,
+  R: <Ed25519 as Ciphersuite>::G,
+  C_tilde: <Ed25519 as Ciphersuite>::G,
+
   // O~ = xG + yT
   x: <Ed25519 as Ciphersuite>::F,
   y: <Ed25519 as Ciphersuite>::F,
@@ -135,19 +156,32 @@ impl OpenedInputTuple {
   ) -> Option<OpenedInputTuple> {
     // Verify the opening is consistent.
     let mut y_tilde = rerandomized_output.r_o + y;
-    if (<Ed25519 as Ciphersuite>::generator() * x) + (*T * y_tilde) !=
-      rerandomized_output.input.O_tilde
+    if ((<Ed25519 as Ciphersuite>::generator() * x) + (*T * y_tilde)) != rerandomized_output.O_tilde
     {
       y_tilde.zeroize();
       None?;
     }
     Some(OpenedInputTuple {
-      input: rerandomized_output.input,
+      O_tilde: rerandomized_output.O_tilde,
+      I_tilde: rerandomized_output.I_tilde,
+      R: rerandomized_output.R,
+      C_tilde: rerandomized_output.C_tilde,
+
       x: *x,
       y: y_tilde,
       r_i: rerandomized_output.r_i,
       r_r_i: rerandomized_output.r_r_i,
     })
+  }
+
+  /// The input tuple produced by this output and set of rerandomizations.
+  pub fn input(&self) -> Input {
+    Input {
+      O_tilde: self.O_tilde.to_bytes(),
+      I_tilde: self.I_tilde.to_bytes(),
+      R: self.R.to_bytes(),
+      C_tilde: self.C_tilde.to_bytes(),
+    }
   }
 }
 
@@ -155,12 +189,12 @@ impl OpenedInputTuple {
 // BP+ and GSP Conjuction from Cypher Stack's Review of the FCMP++ Composition
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct SpendAuthAndLinkability {
-  P: <Ed25519 as Ciphersuite>::G,
-  A: <Ed25519 as Ciphersuite>::G,
-  B: <Ed25519 as Ciphersuite>::G,
-  R_O: <Ed25519 as Ciphersuite>::G,
-  R_P: <Ed25519 as Ciphersuite>::G,
-  R_L: <Ed25519 as Ciphersuite>::G,
+  P: [u8; 32],
+  A: [u8; 32],
+  B: [u8; 32],
+  R_O: [u8; 32],
+  R_P: [u8; 32],
+  R_L: [u8; 32],
   s_alpha: <Ed25519 as Ciphersuite>::F,
   s_beta: <Ed25519 as Ciphersuite>::F,
   s_delta: <Ed25519 as Ciphersuite>::F,
@@ -175,29 +209,31 @@ impl SpendAuthAndLinkability {
     signable_tx_hash: [u8; 32],
     input: &Input,
     L: EdwardsPoint,
-    P: EdwardsPoint,
-    A: EdwardsPoint,
-    B: EdwardsPoint,
-    R_O: EdwardsPoint,
-    R_P: EdwardsPoint,
-    R_L: EdwardsPoint,
+    P: [u8; 32],
+    A: [u8; 32],
+    B: [u8; 32],
+    R_O: [u8; 32],
+    R_P: [u8; 32],
+    R_L: [u8; 32],
   ) -> Scalar {
     let mut transcript = Blake2b512::new();
 
     transcript.update(signable_tx_hash);
     input.transcript(&mut transcript, L);
 
-    transcript.update(P.to_bytes());
-    transcript.update(A.to_bytes());
-    transcript.update(B.to_bytes());
-    transcript.update(R_O.to_bytes());
-    transcript.update(R_P.to_bytes());
-    transcript.update(R_L.to_bytes());
+    transcript.update(P);
+    transcript.update(A);
+    transcript.update(B);
+    transcript.update(R_O);
+    transcript.update(R_P);
+    transcript.update(R_L);
 
     Scalar::from_hash(transcript.clone())
   }
 
   /// Prove a Spend-Authorization and Linkability proof.
+  ///
+  /// This returns the key image with the proof.
   pub fn prove(
     rng: &mut (impl RngCore + CryptoRng),
     signable_tx_hash: [u8; 32],
@@ -208,7 +244,7 @@ impl SpendAuthAndLinkability {
     let U = EdwardsPoint((*FCMP_PLUS_PLUS_U).into());
     let V = EdwardsPoint((*FCMP_PLUS_PLUS_V).into());
 
-    let L = (opening.input.I_tilde * opening.x) - (U * (opening.r_i * opening.x));
+    let L = (opening.I_tilde * opening.x) - (U * (opening.r_i * opening.x));
 
     let alpha = Zeroizing::new(<Ed25519 as Ciphersuite>::F::random(&mut *rng));
     let beta = Zeroizing::new(<Ed25519 as Ciphersuite>::F::random(&mut *rng));
@@ -231,9 +267,19 @@ impl SpendAuthAndLinkability {
 
     let R_O = alpha_G + (T_ * *r_y);
     let R_P = (U * *r_z) + (T_ * *r_r_p);
-    let R_L = (opening.input.I_tilde * *alpha) - (U * *r_z);
+    let R_L = (opening.I_tilde * *alpha) - (U * *r_z);
 
-    let e = Self::challenge(signable_tx_hash, &opening.input, L, P, A, B, R_O, R_P, R_L);
+    let e = Self::challenge(
+      signable_tx_hash,
+      &opening.input(),
+      L,
+      P.to_bytes(),
+      A.to_bytes(),
+      B.to_bytes(),
+      R_O.to_bytes(),
+      R_P.to_bytes(),
+      R_L.to_bytes(),
+    );
 
     let s_alpha = *alpha + (e * opening.x);
     let s_beta = *beta + (e * opening.r_i);
@@ -247,7 +293,20 @@ impl SpendAuthAndLinkability {
 
     (
       L,
-      SpendAuthAndLinkability { P, A, B, R_O, R_P, R_L, s_alpha, s_beta, s_delta, s_y, s_z, s_r_p },
+      SpendAuthAndLinkability {
+        P: P.to_bytes(),
+        A: A.to_bytes(),
+        B: B.to_bytes(),
+        R_O: R_O.to_bytes(),
+        R_P: R_P.to_bytes(),
+        R_L: R_L.to_bytes(),
+        s_alpha,
+        s_beta,
+        s_delta,
+        s_y,
+        s_z,
+        s_r_p,
+      },
     )
   }
 
@@ -265,37 +324,40 @@ impl SpendAuthAndLinkability {
     signable_tx_hash: [u8; 32],
     input: &Input,
     L: <Ed25519 as Ciphersuite>::G,
-  ) {
+  ) -> Result<(), std_shims::io::Error> {
     let G = <Ed25519 as Ciphersuite>::G::generator();
     let T_ = *T;
     let U = EdwardsPoint((*FCMP_PLUS_PLUS_U).into());
     let V = EdwardsPoint((*FCMP_PLUS_PLUS_V).into());
 
-    let e = Self::challenge(
-      signable_tx_hash,
-      input,
-      L,
-      self.P,
-      self.A,
-      self.B,
-      self.R_O,
-      self.R_P,
-      self.R_L,
-    );
+    let O_tilde = Ed25519::read_G(&mut input.O_tilde.as_slice())?;
+    let I_tilde = Ed25519::read_G(&mut input.I_tilde.as_slice())?;
+    let R = Ed25519::read_G(&mut input.R.as_slice())?;
+
+    let Self { P, A, B, R_O, R_P, R_L, s_alpha, s_beta, s_delta, s_y, s_z, s_r_p } = self;
+
+    let e = Self::challenge(signable_tx_hash, input, L, *P, *A, *B, *R_O, *R_P, *R_L);
+
+    let P = Ed25519::read_G(&mut P.as_slice())?;
+    let A = Ed25519::read_G(&mut A.as_slice())?;
+    let B = Ed25519::read_G(&mut B.as_slice())?;
+    let R_O = Ed25519::read_G(&mut R_O.as_slice())?;
+    let R_P = Ed25519::read_G(&mut R_P.as_slice())?;
+    let R_L = Ed25519::read_G(&mut R_L.as_slice())?;
 
     // BP+ Verification Statement
     verifier.queue(
       rng,
       (),
       [
-        (e * e, self.P),
-        (e, self.A),
-        (Scalar::ONE, self.B),
+        (e * e, P),
+        (e, A),
+        (Scalar::ONE, B),
         // RHS
-        (-(self.s_alpha * e), G),
-        (-(self.s_beta * e), V),
-        (-(self.s_alpha * self.s_beta), U),
-        (-self.s_delta, T_),
+        (-(s_alpha * e), G),
+        (-(s_beta * e), V),
+        (-(s_alpha * s_beta), U),
+        (-s_delta, T_),
       ],
     );
 
@@ -304,11 +366,11 @@ impl SpendAuthAndLinkability {
       rng,
       (),
       [
-        (Scalar::ONE, self.R_O),
-        (e, input.O_tilde),
+        (Scalar::ONE, R_O),
+        (e, O_tilde),
         // RHS
-        (-self.s_alpha, G),
-        (-self.s_y, T_),
+        (-s_alpha, G),
+        (-s_y, T_),
       ],
     );
 
@@ -317,11 +379,11 @@ impl SpendAuthAndLinkability {
       rng,
       (),
       [
-        (Scalar::ONE, self.R_P),
-        (e, (self.P - input.O_tilde - input.R)),
+        (Scalar::ONE, R_P),
+        (e, (P - O_tilde - R)),
         // RHS
-        (-self.s_z, U),
-        (-self.s_r_p, T_),
+        (-s_z, U),
+        (-s_r_p, T_),
       ],
     );
 
@@ -330,24 +392,26 @@ impl SpendAuthAndLinkability {
       rng,
       (),
       [
-        (Scalar::ONE, self.R_L),
+        (Scalar::ONE, R_L),
         (e, L),
         // RHS
-        (-self.s_alpha, input.I_tilde),
+        (-s_alpha, I_tilde),
         // This term was supposed to be subtracted, so our negation cancels out
-        (self.s_z, U),
+        (*s_z, U),
       ],
     );
+
+    Ok(())
   }
 
   /// Write a Spend-Authorization and Linkability proof.
   pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
-    writer.write_all(&self.P.to_bytes())?;
-    writer.write_all(&self.A.to_bytes())?;
-    writer.write_all(&self.B.to_bytes())?;
-    writer.write_all(&self.R_O.to_bytes())?;
-    writer.write_all(&self.R_P.to_bytes())?;
-    writer.write_all(&self.R_L.to_bytes())?;
+    writer.write_all(&self.P)?;
+    writer.write_all(&self.A)?;
+    writer.write_all(&self.B)?;
+    writer.write_all(&self.R_O)?;
+    writer.write_all(&self.R_P)?;
+    writer.write_all(&self.R_L)?;
     writer.write_all(&self.s_alpha.to_repr())?;
     writer.write_all(&self.s_beta.to_repr())?;
     writer.write_all(&self.s_delta.to_repr())?;
@@ -359,12 +423,12 @@ impl SpendAuthAndLinkability {
   /// Read a Spend-Authorization and Linkability proof.
   pub fn read(reader: &mut impl io::Read) -> io::Result<Self> {
     Ok(Self {
-      P: Ed25519::read_G(reader)?,
-      A: Ed25519::read_G(reader)?,
-      B: Ed25519::read_G(reader)?,
-      R_O: Ed25519::read_G(reader)?,
-      R_P: Ed25519::read_G(reader)?,
-      R_L: Ed25519::read_G(reader)?,
+      P: monero_io::read_bytes(reader)?,
+      A: monero_io::read_bytes(reader)?,
+      B: monero_io::read_bytes(reader)?,
+      R_O: monero_io::read_bytes(reader)?,
+      R_P: monero_io::read_bytes(reader)?,
+      R_L: monero_io::read_bytes(reader)?,
       s_alpha: Ed25519::read_F(reader)?,
       s_beta: Ed25519::read_F(reader)?,
       s_delta: Ed25519::read_F(reader)?,

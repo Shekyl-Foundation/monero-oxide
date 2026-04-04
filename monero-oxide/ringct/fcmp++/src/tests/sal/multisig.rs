@@ -51,6 +51,6 @@ fn test_sal_multisig() {
   );
 
   let mut verifier = BatchVerifier::new(1);
-  sig.verify(&mut OsRng, &mut verifier, [0; 32], &input, L);
+  sig.verify(&mut OsRng, &mut verifier, [0; 32], &input, L).unwrap();
   assert!(verifier.verify_vartime());
 }

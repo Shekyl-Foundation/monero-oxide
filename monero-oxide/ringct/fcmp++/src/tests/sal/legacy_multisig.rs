@@ -47,6 +47,6 @@ fn test_sal_legacy_multisig() {
   assert_eq!(I * *recover_key(&keys.values().cloned().collect::<Vec<_>>()).unwrap(), L);
 
   let mut verifier = BatchVerifier::new(1);
-  sig.verify(&mut OsRng, &mut verifier, [0; 32], &input, L);
+  sig.verify(&mut OsRng, &mut verifier, [0; 32], &input, L).unwrap();
   assert!(verifier.verify_vartime());
 }

@@ -28,6 +28,6 @@ fn test_sal() {
   let (L_, proof) = SpendAuthAndLinkability::prove(&mut OsRng, [0; 32], &opening);
   assert_eq!(L_, L);
   let mut verifier = BatchVerifier::new(1);
-  proof.verify(&mut OsRng, &mut verifier, [0; 32], &input, L);
+  proof.verify(&mut OsRng, &mut verifier, [0; 32], &input, L).unwrap();
   assert!(verifier.verify_vartime());
 }

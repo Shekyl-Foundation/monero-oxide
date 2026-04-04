@@ -100,70 +100,54 @@ pub static FCMP_PARAMS: LazyLock<FcmpParams<Curves>> = LazyLock::new(|| {
 /// be preferred.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
 pub struct Input {
-  O_tilde: <Ed25519 as Ciphersuite>::G,
-  I_tilde: <Ed25519 as Ciphersuite>::G,
-  R: <Ed25519 as Ciphersuite>::G,
-  C_tilde: <Ed25519 as Ciphersuite>::G,
+  O_tilde: [u8; 32],
+  I_tilde: [u8; 32],
+  R: [u8; 32],
+  C_tilde: [u8; 32],
 }
 
 impl Input {
   // Write an Input without the pseudo-out.
   fn write_partial(&self, writer: &mut impl io::Write) -> io::Result<()> {
-    writer.write_all(&self.O_tilde.to_bytes())?;
-    writer.write_all(&self.I_tilde.to_bytes())?;
-    writer.write_all(&self.R.to_bytes())
+    writer.write_all(&self.O_tilde)?;
+    writer.write_all(&self.I_tilde)?;
+    writer.write_all(&self.R)
   }
 
-  fn read_partial(
-    C_tilde: <Ed25519 as Ciphersuite>::G,
-    reader: &mut impl io::Read,
-  ) -> io::Result<Input> {
+  fn read_partial(C_tilde: [u8; 32], reader: &mut impl io::Read) -> io::Result<Input> {
     Ok(Self {
-      O_tilde: Ed25519::read_G(reader)?,
-      I_tilde: Ed25519::read_G(reader)?,
-      R: Ed25519::read_G(reader)?,
+      O_tilde: monero_io::read_bytes(reader)?,
+      I_tilde: monero_io::read_bytes(reader)?,
+      R: monero_io::read_bytes(reader)?,
       C_tilde,
     })
   }
 
-  // Write the full pseudo-out.
-  fn write_full(&self, writer: &mut impl io::Write) -> io::Result<()> {
-    self.write_partial(writer)?;
-    writer.write_all(&self.C_tilde.to_bytes())
-  }
-
-  fn read_full(reader: &mut impl io::Read) -> io::Result<Input> {
-    let mut OIR = [0; 3 * 32];
-    reader.read_exact(&mut OIR)?;
-    let C_tilde = Ed25519::read_G(reader)?;
-    Self::read_partial(C_tilde, &mut OIR.as_slice())
-  }
-
   fn transcript(&self, transcript: &mut Blake2b512, L: <Ed25519 as Ciphersuite>::G) {
-    transcript.update(self.O_tilde.to_bytes());
-    transcript.update(self.I_tilde.to_bytes());
-    transcript.update(self.C_tilde.to_bytes());
-    transcript.update(self.R.to_bytes());
+    transcript.update(self.O_tilde);
+    transcript.update(self.I_tilde);
+    transcript.update(self.C_tilde);
+    transcript.update(self.R);
     transcript.update(L.to_bytes());
   }
 
   /// O~ from the input commitment.
-  pub fn O_tilde(&self) -> <Ed25519 as Ciphersuite>::G {
+  pub fn O_tilde(&self) -> [u8; 32] {
     self.O_tilde
   }
 
   /// I~ from the input commitment.
-  pub fn I_tilde(&self) -> <Ed25519 as Ciphersuite>::G {
+  pub fn I_tilde(&self) -> [u8; 32] {
     self.I_tilde
   }
 
   /// R from the input commitment.
-  pub fn R(&self) -> <Ed25519 as Ciphersuite>::G {
+  pub fn R(&self) -> [u8; 32] {
     self.R
   }
 
   /// C~ from the input commitment (the pseudo-out).
-  pub fn C_tilde(&self) -> <Ed25519 as Ciphersuite>::G {
+  pub fn C_tilde(&self) -> [u8; 32] {
     self.C_tilde
   }
 }
@@ -228,8 +212,8 @@ impl FcmpPlusPlus {
   ) -> io::Result<Self> {
     let mut inputs = vec![];
     for pseudo_out in pseudo_outs {
-      let C_tilde = Ed25519::read_G(&mut pseudo_out.as_slice())?;
-      inputs.push((Input::read_partial(C_tilde, reader)?, SpendAuthAndLinkability::read(reader)?));
+      inputs
+        .push((Input::read_partial(*pseudo_out, reader)?, SpendAuthAndLinkability::read(reader)?));
     }
     let fcmp = Fcmp::read(reader, pseudo_outs.len(), layers)?;
     Ok(Self { inputs, fcmp })
@@ -264,9 +248,19 @@ impl FcmpPlusPlus {
 
     let mut fcmp_inputs = Vec::with_capacity(self.inputs.len());
     for ((input, spend_auth_and_linkability), key_image) in self.inputs.iter().zip(key_images) {
-      spend_auth_and_linkability.verify(rng, verifier_ed, signable_tx_hash, input, key_image);
+      spend_auth_and_linkability
+        .verify(rng, verifier_ed, signable_tx_hash, input, key_image)
+        .map_err(|e| FcmpPlusPlusError::FcmpError(FcmpError::IoError(e)))?;
 
-      fcmp_inputs.push(fcmps::Input::new(input.O_tilde, input.I_tilde, input.R, input.C_tilde)?);
+      let O_tilde = Ed25519::read_G(&mut input.O_tilde.as_slice())
+        .map_err(|e| FcmpPlusPlusError::FcmpError(FcmpError::IoError(e)))?;
+      let I_tilde = Ed25519::read_G(&mut input.I_tilde.as_slice())
+        .map_err(|e| FcmpPlusPlusError::FcmpError(FcmpError::IoError(e)))?;
+      let R = Ed25519::read_G(&mut input.R.as_slice())
+        .map_err(|e| FcmpPlusPlusError::FcmpError(FcmpError::IoError(e)))?;
+      let C_tilde = Ed25519::read_G(&mut input.C_tilde.as_slice())
+        .map_err(|e| FcmpPlusPlusError::FcmpError(FcmpError::IoError(e)))?;
+      fcmp_inputs.push(fcmps::Input::new(O_tilde, I_tilde, R, C_tilde)?);
     }
 
     Ok(self.fcmp.verify(rng, verifier_1, verifier_2, &*FCMP_PARAMS, tree, layers, &fcmp_inputs)?)

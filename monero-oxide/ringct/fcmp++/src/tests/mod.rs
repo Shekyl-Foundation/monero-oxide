@@ -4,10 +4,7 @@ use rand_core::OsRng;
 
 use multiexp::multiexp_vartime;
 use dalek_ff_group::{Scalar, EdwardsPoint, Ed25519};
-use ciphersuite::{
-  group::{Group as _, GroupEncoding as _},
-  Ciphersuite,
-};
+use ciphersuite::{group::Group as _, Ciphersuite};
 use helioselene::{Selene, Helios};
 use ec_divisors::{DivisorCurve as _, ScalarDecomposition};
 
@@ -108,8 +105,7 @@ fn test() {
   let mut buf = vec![];
   fcmp_plus_plus.write(&mut buf).unwrap();
   assert_eq!(FcmpPlusPlus::proof_size(1, 1), buf.len());
-  let fcmp_plus_plus =
-    FcmpPlusPlus::read(&[input.C_tilde().to_bytes()], 1, &mut buf.as_slice()).unwrap();
+  let fcmp_plus_plus = FcmpPlusPlus::read(&[input.C_tilde], 1, &mut buf.as_slice()).unwrap();
 
   fcmp_plus_plus
     .verify(
