@@ -12,7 +12,7 @@ jobs:
   clippy:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-15-intel, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-26-intel, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -53,7 +53,7 @@ jobs:
 
       - name: Install cargo deny
         shell: bash
-        run: cargo +1.92 install cargo-deny --version =0.18.9
+        run: cargo +1.94.1 install cargo-deny --version =0.19.0
 
       - name: Run cargo deny
         shell: bash
@@ -109,8 +109,8 @@ jobs:
       - name: Verify all dependencies are in use
         shell: bash
         run: |
-          cargo +1.92 install cargo-machete --version =0.9.1
-          cargo +1.92 machete
+          cargo +1.94.1 install cargo-machete --version =0.9.1
+          cargo +1.94.1 machete
 
   msrv:
     runs-on: ubuntu-latest
@@ -119,14 +119,21 @@ jobs:
       - name: Verify claimed `rust-version`
         shell: bash
         run: |
-          cargo +1.92 install cargo-msrv --version =0.18.4
+          cargo +1.94.1 install cargo-msrv --version =0.19.3
 
           function check_msrv {
             # We `cd` into the directory passed as the first argument, but will return to the
             # directory called from.
             return_to=$(pwd)
             echo "Checking $1"
-            cd $1
+            cd "$1"
+
+            # If this is marked `publish = false`, check it doesn't declare a MSRV
+            if [ $(grep "publish = false" ./Cargo.toml | wc -l || true) -ne 0 ]; then
+              [ "$(grep 'rust-version' ./Cargo.toml || true)" = "" ]
+              cd "$return_to"
+              return
+            fi
 
             # We then find the existing `rust-version` using `grep` (for the right line) and then a
             # regex (to strip to just the major and minor version).
@@ -157,7 +164,7 @@ jobs:
             mv ./Cargo.toml.bak ./Cargo.toml
 
             # Return to the directory called from and return the result.
-            cd $return_to
+            cd "$return_to"
             return $result
           }
 
@@ -175,9 +182,6 @@ jobs:
             members=$(echo "$members" | sed "1s/.*/\[/")
             # Correct the last line, which was malleated to "],"
             members=$(echo "$members" | sed "$(echo "$members" | wc -l)s/\]\,/\]/")
-
-            # Remove any crates not to not be checked
-            members=$(echo "$members" | grep -v "tests/no-std")
 
             # Remove the trailing comma by replacing the last line's "," with ""
             members=$(echo "$members" | sed "$(($(echo "$members" | wc -l) - 1))s/\,//")
