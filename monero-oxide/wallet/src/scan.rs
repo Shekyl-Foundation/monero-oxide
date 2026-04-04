@@ -1,16 +1,18 @@
-use core::ops::Deref;
+use core::ops::Deref as _;
 use std_shims::{vec, vec::Vec, collections::HashMap};
 
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+#[cfg(feature = "compile-time-generators")]
 use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
-use monero_rpc::ScannableBlock;
 use monero_oxide::{
-  io::*,
-  primitives::Commitment,
+  ed25519::{Scalar, CompressedPoint, Point, Commitment},
   transaction::{Timelock, Pruned, Transaction},
 };
+use monero_interface::ScannableBlock;
 use crate::{
   address::SubaddressIndex, ViewPair, GuaranteedViewPair, output::*, PaymentId, Extra,
   SharedKeyDerivations,
@@ -85,6 +87,7 @@ struct InternalScanner {
 }
 
 impl Zeroize for InternalScanner {
+  #[expect(clippy::iter_over_hash_type)]
   fn zeroize(&mut self) {
     self.pair.zeroize();
     self.guaranteed.zeroize();
@@ -106,13 +109,13 @@ impl ZeroizeOnDrop for InternalScanner {}
 impl InternalScanner {
   fn new(pair: ViewPair, guaranteed: bool) -> Self {
     let mut subaddresses = HashMap::new();
-    subaddresses.insert(pair.spend().compress().into(), None);
+    subaddresses.insert(pair.spend().compress(), None);
     Self { pair, guaranteed, subaddresses }
   }
 
   fn register_subaddress(&mut self, subaddress: SubaddressIndex) {
     let (spend, _) = self.pair.subaddress_keys(subaddress);
-    self.subaddresses.insert(spend.compress().into(), Some(subaddress));
+    self.subaddresses.insert(spend.compress(), Some(subaddress));
   }
 
   fn scan_transaction(
@@ -139,6 +142,17 @@ impl InternalScanner {
 
     let mut res = vec![];
     for (o, output) in tx.prefix().outputs.iter().enumerate() {
+      /*
+        Explicitly skip keys which are the identity.
+
+        These are theoretically able to be scanned (with negligible probability except for a
+        recipient who chooses their keys as to cause this), but are unspendable due to restrictions
+        the key image isn't the identity point (in place since the RingCT upgrade).
+      */
+      if output.key == CompressedPoint::IDENTITY {
+        continue;
+      }
+
       let Some(output_key) = output.key.decompress() else { continue };
 
       // Monero checks with each TX key and with the additional key for this output
@@ -148,23 +162,16 @@ impl InternalScanner {
       // additional key for this output
       // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
       //   /src/cryptonote_basic/cryptonote_format_utils.cpp#L1060-L1070
-      let additional = additional.as_ref().map(|additional| additional.get(o));
+      let additional = additional.as_ref().and_then(|additional| additional.get(o));
 
-      #[allow(clippy::manual_let_else)]
-      for key in tx_keys.iter().map(|key| Some(Some(key))).chain(core::iter::once(additional)) {
-        // Get the key, or continue if there isn't one
-        let key = match key {
-          Some(Some(key)) => key,
-          Some(None) | None => continue,
-        };
+      for key in tx_keys.iter().map(Some).chain(core::iter::once(additional)).flatten().copied() {
         // Calculate the ECDH
-        let ecdh = Zeroizing::new(self.pair.view.deref() * key);
+        let ecdh = {
+          let dalek_view = Zeroizing::new((*self.pair.view).into());
+          Zeroizing::new(Point::from(dalek_view.deref() * key.into()))
+        };
         let output_derivations = SharedKeyDerivations::output_derivations(
-          if self.guaranteed {
-            Some(SharedKeyDerivations::uniqueness(&tx.prefix().inputs))
-          } else {
-            None
-          },
+          self.guaranteed.then(|| SharedKeyDerivations::uniqueness(&tx.prefix().inputs)),
           ecdh.clone(),
           o,
         );
@@ -183,19 +190,21 @@ impl InternalScanner {
           // If someone wanted to malleate output keys with distinct torsions, only one will be
           // scanned accordingly (the one which has matching torsion of the spend key)
           let subaddress_spend_key =
-            output_key - (&output_derivations.shared_key * ED25519_BASEPOINT_TABLE);
-          self.subaddresses.get::<CompressedPoint>(&subaddress_spend_key.compress().into())
+            output_key.into() - (&output_derivations.shared_key.into() * ED25519_BASEPOINT_TABLE);
+          self
+            .subaddresses
+            .get::<CompressedPoint>(&subaddress_spend_key.compress().to_bytes().into())
         }) else {
           continue;
         };
         let subaddress = *subaddress;
 
         // The key offset is this shared key
-        let mut key_offset = output_derivations.shared_key;
+        let mut key_offset = output_derivations.shared_key.into();
         if let Some(subaddress) = subaddress {
           // And if this was to a subaddress, it's additionally the offset from subaddress spend
           // key to the normal spend key
-          key_offset += self.pair.subaddress_derivation(subaddress);
+          key_offset += self.pair.subaddress_derivation(subaddress).into();
         }
         // Since we've found an output to us, get its amount
         let mut commitment = Commitment::zero();
@@ -219,9 +228,7 @@ impl InternalScanner {
           };
 
           // Rebuild the commitment to verify it
-          if Some(&CompressedPoint::from(commitment.calculate().compress())) !=
-            proofs.base.commitments.get(o)
-          {
+          if Some(&commitment.commit().compress()) != proofs.base.commitments.get(o) {
             continue;
           }
         }
@@ -240,7 +247,7 @@ impl InternalScanner {
               ),
             )?,
           },
-          data: OutputData { key: output_key, key_offset, commitment },
+          data: OutputData { key: output_key, key_offset: Scalar::from(key_offset), commitment },
           metadata: Metadata {
             additional_timelock: tx.prefix().additional_timelock,
             subaddress,
@@ -299,8 +306,12 @@ impl InternalScanner {
 
       // Update the RingCT starting index for the next TX
       if matches!(tx, Transaction::V2 { .. }) {
-        output_index_for_first_ringct_output += u64::try_from(tx.prefix().outputs.len())
-          .expect("couldn't convert amount of outputs (usize) to u64")
+        output_index_for_first_ringct_output = output_index_for_first_ringct_output
+          .checked_add(
+            u64::try_from(tx.prefix().outputs.len())
+              .expect("couldn't convert amount of outputs (usize) to u64"),
+          )
+          .ok_or(ScanError::InvalidScannableBlock("RingCT output indexes exceeded u64::MAX"))?;
       }
     }
 
@@ -342,11 +353,17 @@ impl Scanner {
   /// Register a subaddress to scan for.
   ///
   /// Subaddresses must be explicitly registered ahead of time in order to be successfully scanned.
+  ///
+  /// This function runs in variable time, notably with regards to the distribution of subaddress
+  /// derivations (which should be reasonably uniform) and the amount of subaddresses registered.
   pub fn register_subaddress(&mut self, subaddress: SubaddressIndex) {
-    self.0.register_subaddress(subaddress)
+    self.0.register_subaddress(subaddress);
   }
 
   /// Scan a block.
+  ///
+  /// This function runs in variable time, notably with regards to how the private view key relates
+  /// to outputs present within the block (such as if it can successfully scan outputs present).
   pub fn scan(&mut self, block: ScannableBlock) -> Result<Timelocked, ScanError> {
     self.0.scan(block)
   }
@@ -371,11 +388,17 @@ impl GuaranteedScanner {
   /// Register a subaddress to scan for.
   ///
   /// Subaddresses must be explicitly registered ahead of time in order to be successfully scanned.
+  ///
+  /// This function runs in variable time, notably with regards to the distribution of subaddress
+  /// derivations (which should be reasonably uniform) and the amount of subaddresses registered.
   pub fn register_subaddress(&mut self, subaddress: SubaddressIndex) {
-    self.0.register_subaddress(subaddress)
+    self.0.register_subaddress(subaddress);
   }
 
   /// Scan a block.
+  ///
+  /// This function runs in variable time, notably with regards to how the private view key relates
+  /// to outputs present within the block (such as if it can successfully scan outputs present).
   pub fn scan(&mut self, block: ScannableBlock) -> Result<Timelocked, ScanError> {
     self.0.scan(block)
   }

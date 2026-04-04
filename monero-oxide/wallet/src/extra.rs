@@ -1,4 +1,4 @@
-use core::ops::BitXor;
+use core::{ops::BitXor, num::NonZero};
 use std_shims::{
   vec,
   vec::Vec,
@@ -7,11 +7,11 @@ use std_shims::{
 
 use zeroize::Zeroize;
 
-use curve25519_dalek::edwards::EdwardsPoint;
+use monero_oxide::{
+  io::*,
+  ed25519::{CompressedPoint, Point},
+};
 
-use monero_oxide::io::*;
-
-pub(crate) const MAX_TX_EXTRA_PADDING_COUNT: usize = 255;
 const MAX_TX_EXTRA_NONCE_SIZE: usize = 255;
 
 const PAYMENT_ID_MARKER: u8 = 0;
@@ -92,14 +92,18 @@ pub enum ExtraField {
   /// Padding.
   ///
   /// This is a block of zeroes within the TX extra.
-  Padding(usize),
+  Padding(NonZero<u8>),
   /// The transaction key.
   ///
   /// This is a commitment to the randomness used for deriving outputs.
-  PublicKey(EdwardsPoint),
+  PublicKey(CompressedPoint),
   /// The nonce field.
   ///
   /// This is used for data, such as payment IDs.
+  ///
+  /// When read, this is bounded by a maximum size. As we directly expose the field here (without a
+  /// constructor asserting its validity), this means it's possible to create an
+  /// `ExtraField::Nonce` which can be written but not read. Please be careful accordingly.
   Nonce(Vec<u8>),
   /// The field for merge-mining.
   ///
@@ -109,7 +113,7 @@ pub enum ExtraField {
   /// The additional transaction keys.
   ///
   /// These are the per-output commitments to the randomness used for deriving outputs.
-  PublicKeys(Vec<EdwardsPoint>),
+  PublicKeys(Vec<CompressedPoint>),
   /// The 'mysterious' Minergate tag.
   ///
   /// This was used by a closed source entity without documentation. Support for parsing it was
@@ -123,26 +127,42 @@ impl ExtraField {
     match self {
       ExtraField::Padding(size) => {
         w.write_all(&[0])?;
-        for _ in 1 .. *size {
+        for _ in 1 .. u8::from(*size) {
           write_byte(&0u8, w)?;
         }
       }
       ExtraField::PublicKey(key) => {
         w.write_all(&[1])?;
-        w.write_all(&key.compress().to_bytes())?;
+        key.write(w)?;
       }
       ExtraField::Nonce(data) => {
         w.write_all(&[2])?;
+        /*
+          This uses `write_vec`, where the `Vec` will be length-prefixed with a VarInt, which
+          differs from Monero's `add_extra_nonce_to_tx_extra`:
+
+          https://github.com/monero-project/monero/blob/02357fe53fbcab3f5102183f0837feed68cf5355
+            /src/cryptonote_basic/cryptonote_format_utils.cpp#L726
+
+          This is because the definition in `tx_extra.h` is followed which does consider this a
+          `VarInt`-length-prefixed container:
+
+          https://github.com/monero-project/monero/blob/02357fe53fbcab3f5102183f0837feed68cf5355
+            /src/cryptonote_basic/tx_extra.h#L112-L115
+
+          The former is considered faulty. See https://github.com/monero-project/monero/pull/10220.
+        */
         write_vec(write_byte, data, w)?;
       }
-      ExtraField::MergeMining(height, merkle) => {
+      ExtraField::MergeMining(depth, merkle_root) => {
         w.write_all(&[3])?;
-        write_varint(height, w)?;
-        w.write_all(merkle)?;
+        VarInt::write(&(depth.varint_len() + merkle_root.len()), w)?;
+        VarInt::write(depth, w)?;
+        w.write_all(merkle_root)?;
       }
       ExtraField::PublicKeys(keys) => {
         w.write_all(&[4])?;
-        write_vec(write_point, keys, w)?;
+        write_vec(CompressedPoint::write, keys, w)?;
       }
       ExtraField::MysteriousMinergate(data) => {
         w.write_all(&[0xDE])?;
@@ -160,35 +180,54 @@ impl ExtraField {
   }
 
   /// Read an ExtraField.
+  ///
+  /// This may be lossy in that `ExtraField::read(&mut buf.as_slice()).serialize() == buf` is not
+  /// guaranteed to hold true.
   pub fn read<R: BufRead>(r: &mut R) -> io::Result<ExtraField> {
     Ok(match read_byte(r)? {
       0 => ExtraField::Padding({
         // Read until either non-zero, max padding count, or end of buffer
-        let mut size: usize = 1;
+        let mut size = 1u8;
         loop {
           let buf = r.fill_buf()?;
           let mut n_consume = 0;
           for v in buf {
             if *v != 0u8 {
-              Err(io::Error::other("non-zero value after padding"))?
+              Err(io::Error::other("non-zero value after padding"))?;
             }
             n_consume += 1;
-            size += 1;
-            if size > MAX_TX_EXTRA_PADDING_COUNT {
-              Err(io::Error::other("padding exceeded max count"))?
+            // https://github.com/monero-project/monero
+            //   /blob/02357fe53fbcab3f5102183f0837feed68cf5355/src/cryptonote_basic/tx_extra.h#L43
+            if size == u8::MAX {
+              Err(io::Error::other("padding exceeded max count"))?;
             }
+            size += 1;
           }
           if n_consume == 0 {
             break;
           }
           r.consume(n_consume);
         }
-        size
+        NonZero::new(size).expect("size started at 1 but incremented to 0?")
       }),
-      1 => ExtraField::PublicKey(read_point(r)?),
+      1 => ExtraField::PublicKey(CompressedPoint::read(r)?),
       2 => ExtraField::Nonce(read_vec(read_byte, Some(MAX_TX_EXTRA_NONCE_SIZE), r)?),
-      3 => ExtraField::MergeMining(read_varint(r)?, read_bytes(r)?),
-      4 => ExtraField::PublicKeys(read_vec(read_point, None, r)?),
+      3 => {
+        let field_len = <usize as VarInt>::read(r)?;
+        let depth = <u64 as VarInt>::read(r)?;
+        let merkle_root = read_bytes(r)?;
+
+        match field_len.checked_sub(depth.varint_len() + merkle_root.len()) {
+          Some(remaining) => {
+            for _ in 0 .. remaining {
+              read_byte(r)?;
+            }
+          }
+          None => Err(io::Error::other("`MergeMining` tag had a length smaller than its fields"))?,
+        }
+        ExtraField::MergeMining(depth, merkle_root)
+      }
+      4 => ExtraField::PublicKeys(read_vec(CompressedPoint::read, None, r)?),
       0xDE => ExtraField::MysteriousMinergate(read_vec(read_byte, None, r)?),
       _ => Err(io::Error::other("unknown extra field"))?,
     })
@@ -196,30 +235,51 @@ impl ExtraField {
 }
 
 /// The result of decoding a transaction's extra field.
+///
+/// Note that the Monero protocol defines a transaction's `extra` field as a byte vector. This is a
+/// parsed view of such a byte vector, yet the Monero protocol does not require the `extra` field
+/// be parseable. The parsing is also lossy in that
+/// `Extra::read(&mut buf.as_slice()).serialize() == buf` is not guaranteed to hold true.
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct Extra(pub(crate) Vec<ExtraField>);
 impl Extra {
   /// The keys within this extra.
   ///
   /// This returns all keys specified with `PublicKey` and the first set of keys specified with
-  /// `PublicKeys`, so long as they're well-formed.
+  /// `PublicKeys`. If any are improperly encoded, identity will be yielded in place, intending to
+  /// cause an ECDH of the identity point, as Monero uses upon improperly-encoded points.
   // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c45
-  //   /src/wallet/wallet2.cpp#L2290-L2300
+  //   /src/wallet/wallet2.cpp#L2290-L2300 (use all transaction keys)
   // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
-  // /src/wallet/wallet2.cpp#L2337-L2340
-  pub fn keys(&self) -> Option<(Vec<EdwardsPoint>, Option<Vec<EdwardsPoint>>)> {
+  //   /src/wallet/wallet2.cpp#L2337-L2340 (use only the first set of additional keys)
+  // https://github.com/monero-project/monero/blob/6bb36309d69e7157b459e957a9a2d64c67e5892e
+  //   /src/wallet/wallet2.cpp#L2368-L2373 (public key was improperly encoded)
+  // https://github.com/monero-project/monero/blob/6bb36309d69e7157b459e957a9a2d64c67e5892e
+  //   /src/wallet/wallet2.cpp#L2383-L2387 (additional key was improperly encoded)
+  pub fn keys(&self) -> Option<(Vec<Point>, Option<Vec<Point>>)> {
+    let identity = {
+      use curve25519_dalek::{traits::Identity as _, EdwardsPoint};
+      Point::from(EdwardsPoint::identity())
+    };
+
     let mut keys = vec![];
     let mut additional = None;
     for field in &self.0 {
       match field.clone() {
-        ExtraField::PublicKey(this_key) => keys.push(this_key),
-        ExtraField::PublicKeys(these_additional) => {
-          additional = additional.or(Some(these_additional))
+        ExtraField::PublicKey(key) => keys.push(key.decompress().unwrap_or(identity)),
+        ExtraField::PublicKeys(keys) => {
+          additional = additional
+            .or(Some(keys.into_iter().map(|key| key.decompress().unwrap_or(identity)).collect()));
         }
-        _ => (),
+        ExtraField::Padding(_) |
+        ExtraField::Nonce(_) |
+        ExtraField::MergeMining(_, _) |
+        ExtraField::MysteriousMinergate(_) => (),
       }
     }
     // Don't return any keys if this was non-standard and didn't include the primary key
+    // https://github.com/monero-project/monero/blob/6bb36309d69e7157b459e957a9a2d64c67e5892e
+    //   /src/wallet/wallet2.cpp#L2338-L2346
     if keys.is_empty() {
       None
     } else {
@@ -289,7 +349,7 @@ impl Extra {
     res
   }
 
-  pub(crate) fn new(key: EdwardsPoint, additional: Vec<EdwardsPoint>) -> Extra {
+  pub(crate) fn new(key: CompressedPoint, additional: Vec<CompressedPoint>) -> Extra {
     let mut res = Extra(Vec::with_capacity(3));
     // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
     //   /src/cryptonote_basic/cryptonote_format_utils.cpp#L627-L633
@@ -309,16 +369,46 @@ impl Extra {
 
   /// Write the Extra.
   ///
+  /// This will write the value in a sorted fashion.
+  ///
   /// This is not of deterministic length nor length-prefixed. It should only be written to a
   /// buffer which will be delimited.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
-    for field in &self.0 {
-      field.write(w)?;
+    #[cfg(debug_assertions)]
+    let mut written = 0;
+    // https://github.com/monero-project/monero/blob/02357fe53fbcab3f5102183f0837feed68cf5355
+    //   /src/cryptonote_basic/cryptonote_format_utils.cpp#L618-L624
+    const SORT_ORDER: [fn(&ExtraField) -> bool; 6] = [
+      |field: &ExtraField| matches!(field, ExtraField::PublicKey(_)),
+      |field: &ExtraField| matches!(field, ExtraField::PublicKeys(_)),
+      |field: &ExtraField| matches!(field, ExtraField::Nonce(_)),
+      |field: &ExtraField| matches!(field, ExtraField::MergeMining(_, _)),
+      |field: &ExtraField| matches!(field, ExtraField::MysteriousMinergate(_)),
+      |field: &ExtraField| matches!(field, ExtraField::Padding(_)),
+    ];
+    // Ensure the length of the `SORT_ORDER` array corresponds to the amount of variants
+    #[cfg(monero_oxide_rust_nightly)]
+    const _SORT_LEN: [(); 0 - core::mem::variant_count::<ExtraField>().abs_diff(SORT_ORDER.len())] =
+      [(); _];
+    for selection in SORT_ORDER {
+      for field in &self.0 {
+        if selection(field) {
+          field.write(w)?;
+          #[cfg(debug_assertions)]
+          {
+            written += 1;
+          }
+        }
+      }
     }
+    #[cfg(debug_assertions)]
+    debug_assert_eq!(written, self.0.len());
     Ok(())
   }
 
   /// Serialize the Extra to a `Vec<u8>`.
+  ///
+  /// This will write the value in a sorted fashion.
   pub fn serialize(&self) -> Vec<u8> {
     let mut buf = vec![];
     self.write(&mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
@@ -329,7 +419,6 @@ impl Extra {
   ///
   /// This is not of deterministic length nor length-prefixed. It should only be read from a buffer
   /// already delimited.
-  #[allow(clippy::unnecessary_wraps)]
   pub fn read<R: BufRead>(r: &mut R) -> io::Result<Extra> {
     let mut res = Extra(vec![]);
     // Extra reads until EOF

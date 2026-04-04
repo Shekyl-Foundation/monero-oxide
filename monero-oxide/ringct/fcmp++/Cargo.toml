@@ -36,7 +36,8 @@ ec-divisors = { path = "../../../crypto/divisors", default-features = false, fea
 generalized-bulletproofs-ec-gadgets = { path = "../../../crypto/fcmps/ec-gadgets", default-features = false }
 fcmps = { package = "full-chain-membership-proofs", path = "../../../crypto/fcmps", default-features = false }
 
-monero-generators = { path = "../../generators", default-features = false }
+monero-ed25519 = { path = "../../ed25519", default-features = false }
+monero-fcmp-plus-plus-generators = { path = "./generators", default-features = false }
 
 rand_chacha = { version = "0.3", default-features = false, optional = true }
 transcript = { package = "flexible-transcript", version = "0.3", default-features = false, features = ["recommended"], optional = true }
@@ -46,7 +47,7 @@ modular-frost = { version = "0.11", default-features = false, features = ["ed255
 ec-divisors = { path = "../../../crypto/divisors", default-features = false, features = ["ed25519"] }
 helioselene = { path = "../../../crypto/helioselene", default-features = false }
 ciphersuite = { version = "0.4", default-features = false }
-monero-generators = { path = "../../generators", default-features = false, features = ["std"] }
+monero-fcmp-plus-plus-generators = { path = "./generators", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 rand_chacha = { version = "0.3", default-features = false }
@@ -72,7 +73,8 @@ std = [
   "generalized-bulletproofs-ec-gadgets/std",
   "fcmps/std",
 
-  "monero-generators/std",
+  "monero-ed25519/std",
+  "monero-fcmp-plus-plus-generators/std",
 
   "rand_chacha?/std",
   "transcript?/std",

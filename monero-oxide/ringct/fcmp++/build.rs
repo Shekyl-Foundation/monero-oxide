@@ -7,18 +7,18 @@ use std::{
 
 #[cfg(feature = "compile-time-generators")]
 trait NewGenerators: ciphersuite::Ciphersuite {
-  fn new_generators() -> monero_generators::FcmpGenerators<Self>;
+  fn new_generators() -> monero_fcmp_plus_plus_generators::FcmpGenerators<Self>;
 }
 #[cfg(feature = "compile-time-generators")]
 impl NewGenerators for helioselene::Helios {
-  fn new_generators() -> monero_generators::FcmpGenerators<Self> {
-    monero_generators::FcmpGenerators::<Self>::new()
+  fn new_generators() -> monero_fcmp_plus_plus_generators::FcmpGenerators<Self> {
+    monero_fcmp_plus_plus_generators::FcmpGenerators::<Self>::new()
   }
 }
 #[cfg(feature = "compile-time-generators")]
 impl NewGenerators for helioselene::Selene {
-  fn new_generators() -> monero_generators::FcmpGenerators<Self> {
-    monero_generators::FcmpGenerators::<Self>::new()
+  fn new_generators() -> monero_fcmp_plus_plus_generators::FcmpGenerators<Self> {
+    monero_fcmp_plus_plus_generators::FcmpGenerators::<Self>::new()
   }
 }
 
@@ -121,8 +121,10 @@ where
         "
           /// The FCMP generators for {id}.
           pub static {}_FCMP_GENERATORS:
-            std_shims::sync::LazyLock<monero_generators::FcmpGenerators<helioselene::{}>> =
-              std_shims::sync::LazyLock::new(|| monero_generators::FcmpGenerators {{
+            std_shims::sync::LazyLock<
+              monero_fcmp_plus_plus_generators::FcmpGenerators<helioselene::{}>
+            > =
+              std_shims::sync::LazyLock::new(|| monero_fcmp_plus_plus_generators::FcmpGenerators {{
                 generators: generalized_bulletproofs::Generators::new(
                   {},
                   {},
@@ -172,11 +174,15 @@ fn generators() {
       format!(
         "
           /// The FCMP generators for Helios.
-          pub static HELIOS_FCMP_GENERATORS: LazyLock<monero_generators::FcmpGenerators<Helios>> =
-            LazyLock::new(monero_generators::FcmpGenerators::<Helios>::new);
+          pub static HELIOS_FCMP_GENERATORS: LazyLock<
+            monero_fcmp_plus_plus_generators::FcmpGenerators<Helios>
+          > =
+            LazyLock::new(monero_fcmp_plus_plus_generators::FcmpGenerators::<Helios>::new);
           /// The FCMP generators for Selene.
-          pub static SELENE_FCMP_GENERATORS: LazyLock<monero_generators::FcmpGenerators<Selene>> =
-            LazyLock::new(monero_generators::FcmpGenerators::<Selene>::new);
+          pub static SELENE_FCMP_GENERATORS: LazyLock<
+            monero_fcmp_plus_plus_generators::FcmpGenerators<Selene>
+          > =
+            LazyLock::new(monero_fcmp_plus_plus_generators::FcmpGenerators::<Selene>::new);
       ",
       )
       .as_bytes(),

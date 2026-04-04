@@ -11,10 +11,8 @@ use modular_frost::{
   tests::{key_gen, algorithm_machines, sign, recover_key},
 };
 
-use monero_generators::T;
-
 use crate::{
-  Output,
+  T, Output,
   sal::{*, legacy_multisig::*},
 };
 
@@ -24,7 +22,7 @@ fn test_sal_legacy_multisig() {
 
   let keys = key_gen::<_, Ed25519>(&mut OsRng);
 
-  let O = keys.values().next().unwrap().group_key() + (EdwardsPoint(*T) * y);
+  let O = keys.values().next().unwrap().group_key() + (*T * y);
   let I = EdwardsPoint::random(&mut OsRng);
   let C = EdwardsPoint::random(&mut OsRng);
 

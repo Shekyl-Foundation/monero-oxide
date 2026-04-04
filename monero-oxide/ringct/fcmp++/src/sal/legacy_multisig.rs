@@ -22,9 +22,9 @@ use modular_frost::{
   algorithm::{WriteAddendum, Algorithm},
 };
 
-use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
+use monero_fcmp_plus_plus_generators::{FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
 
-use crate::sal::*;
+use crate::{T, sal::*};
 
 #[derive(Clone, PartialEq, Eq, Zeroize)]
 struct PartialSpendAuthAndLinkability {
@@ -116,7 +116,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     // One nonce, represented across G, U, I_tilde
     vec![vec![
       EdwardsPoint::generator(),
-      EdwardsPoint(*FCMP_PLUS_PLUS_U),
+      EdwardsPoint((*FCMP_PLUS_PLUS_U).into()),
       self.rerandomized_output.input.I_tilde,
     ]]
   }
@@ -130,7 +130,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
       key_image_share: self.I * keys.original_secret_share().deref(),
       // This could be done once, not per signing protocol, but it'd require a dedicated
       // interactive migration protocol for all existing multisigs
-      x_U_share: EdwardsPoint(*FCMP_PLUS_PLUS_U) * keys.original_secret_share().deref(),
+      x_U_share: EdwardsPoint((*FCMP_PLUS_PLUS_U).into()) * keys.original_secret_share().deref(),
     }
   }
   fn read_addendum<R2: io::Read>(&self, reader: &mut R2) -> io::Result<Self::Addendum> {
@@ -169,7 +169,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
       l
     {
       interpolated_key_image_share += self.I * view.offset();
-      interpolated_x_U_share += EdwardsPoint(*FCMP_PLUS_PLUS_U) * view.offset();
+      interpolated_x_U_share += EdwardsPoint((*FCMP_PLUS_PLUS_U).into()) * view.offset();
     }
 
     self.L += interpolated_key_image_share;
@@ -193,9 +193,9 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
   ) -> Scalar {
     assert!(msg.is_empty(), "SalLegacyAlgorithm message wasn't empty");
 
-    let T_ = EdwardsPoint(*T);
-    let U = EdwardsPoint(*FCMP_PLUS_PLUS_U);
-    let V = EdwardsPoint(*FCMP_PLUS_PLUS_V);
+    let T_ = *T;
+    let U = EdwardsPoint((*FCMP_PLUS_PLUS_U).into());
+    let V = EdwardsPoint((*FCMP_PLUS_PLUS_V).into());
 
     let y = self.y + self.rerandomized_output.r_o;
 
@@ -354,7 +354,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     let mut weight_transcript =
       RecommendedTranscript::new(b"monero-fcmp-plus-plus v0.1 SalLegacyAlgorithm::verify_share");
     weight_transcript.append_message(b"G", EdwardsPoint::generator().to_bytes());
-    weight_transcript.append_message(b"U", EdwardsPoint(*FCMP_PLUS_PLUS_U).to_bytes());
+    weight_transcript.append_message(b"U", EdwardsPoint((*FCMP_PLUS_PLUS_U).into()).to_bytes());
     weight_transcript.append_message(b"I", self.I.to_bytes());
     weight_transcript.append_message(b"I~", self.rerandomized_output.input.I_tilde.to_bytes());
     weight_transcript.append_message(b"xG", verification_share.to_bytes());
@@ -376,7 +376,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
       // U
       (weight_u, nonces[0][1]),
       (weight_u * e, x_U_share),
-      (weight_u * -share, EdwardsPoint(*FCMP_PLUS_PLUS_U)),
+      (weight_u * -share, EdwardsPoint((*FCMP_PLUS_PLUS_U).into())),
       // `I~`
       (weight_i, nonces[0][2]),
       (weight_i * e, key_image_share),
@@ -419,7 +419,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     transcript.append_message(b"y", y.to_repr());
 
     let I = rerandomized_output.input.I_tilde -
-      (EdwardsPoint(*FCMP_PLUS_PLUS_U) * rerandomized_output.r_i);
+      (EdwardsPoint((*FCMP_PLUS_PLUS_U).into()) * rerandomized_output.r_i);
 
     Self {
       rng,

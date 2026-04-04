@@ -21,9 +21,9 @@ use modular_frost::{
   curve::Curve, FrostError, Participant, ThresholdKeys, ThresholdView, algorithm::Algorithm,
 };
 
-use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
+use monero_fcmp_plus_plus_generators::{FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
 
-use crate::sal::*;
+use crate::{T, sal::*};
 
 /// The Ed25519 curve/ciphersuite, yet with T as the generator.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
@@ -36,7 +36,7 @@ impl Ciphersuite for Ed25519T {
   const ID: &'static [u8] = b"Ed25519 Monero T";
 
   fn generator() -> Self::G {
-    EdwardsPoint(*T)
+    *T
   }
 
   fn hash_to_F(dst: &[u8], data: &[u8]) -> Self::F {
@@ -112,7 +112,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
   }
 
   fn nonces(&self) -> Vec<Vec<EdwardsPoint>> {
-    vec![vec![EdwardsPoint(*T)]]
+    vec![vec![*T]]
   }
 
   fn preprocess_addendum<R2: RngCore + CryptoRng>(
@@ -145,9 +145,9 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     assert!(msg.is_empty(), "SalAlgorithm message wasn't empty");
 
     let G = <Ed25519 as Ciphersuite>::G::generator();
-    let T_ = EdwardsPoint(*T);
-    let U = EdwardsPoint(*FCMP_PLUS_PLUS_U);
-    let V = EdwardsPoint(*FCMP_PLUS_PLUS_V);
+    let T_ = *T;
+    let U = EdwardsPoint((*FCMP_PLUS_PLUS_U).into());
+    let V = EdwardsPoint((*FCMP_PLUS_PLUS_V).into());
 
     // We deterministically derive all the nonces which aren't for the `y` parameter as that's the
     // only variable considered private by this protocol
@@ -297,11 +297,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     nonces: &[Vec<EdwardsPoint>],
     share: Scalar,
   ) -> Result<Vec<(Scalar, EdwardsPoint)>, ()> {
-    Ok(vec![
-      (Scalar::ONE, nonces[0][0]),
-      (self.e.unwrap(), verification_share),
-      (-share, EdwardsPoint(*T)),
-    ])
+    Ok(vec![(Scalar::ONE, nonces[0][0]), (self.e.unwrap(), verification_share), (-share, *T)])
   }
 }
 
@@ -333,7 +329,7 @@ impl<R: Send + Sync + Clone + RngCore + CryptoRng, T: Sync + Clone + Debug + Tra
     transcript.append_message(b"x", x.to_repr());
 
     let L = (rerandomized_output.input.I_tilde -
-      (EdwardsPoint(*FCMP_PLUS_PLUS_U) * rerandomized_output.r_i)) *
+      (EdwardsPoint((*FCMP_PLUS_PLUS_U).into()) * rerandomized_output.r_i)) *
       x;
 
     Self { rng, transcript, signable_tx_hash, rerandomized_output, x, L, partial: None, e: None }

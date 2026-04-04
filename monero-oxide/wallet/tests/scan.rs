@@ -1,24 +1,25 @@
-use monero_simple_request_rpc::SimpleRequestRpc;
+#![expect(missing_docs)]
+
+use monero_simple_request_rpc::{prelude::MoneroDaemon, SimpleRequestTransport};
 use monero_wallet::{
-  transaction::Transaction, rpc::Rpc, address::SubaddressIndex, extra::PaymentId, GuaranteedScanner,
+  transaction::Transaction, address::SubaddressIndex, extra::PaymentId, GuaranteedScanner,
 };
 
 mod runner;
 
-#[allow(clippy::upper_case_acronyms)]
-type SRR = SimpleRequestRpc;
+type Rpc = MoneroDaemon<SimpleRequestTransport>;
 type Tx = Transaction;
 
 test!(
   scan_standard_address,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let view = runner::random_address().1;
       let scanner = Scanner::new(view.clone());
       builder.add_payment(view.legacy_address(Network::Mainnet), 5);
       (builder.build().unwrap(), scanner)
     },
-    |_rpc: SRR, block, tx: Transaction, _, mut state: Scanner| async move {
+    async |_rpc: Rpc, block, tx: Transaction, _, mut state: Scanner| {
       let output = state.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -31,7 +32,7 @@ test!(
 test!(
   scan_subaddress,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let subaddress = SubaddressIndex::new(0, 1).unwrap();
 
       let view = runner::random_address().1;
@@ -41,7 +42,7 @@ test!(
       builder.add_payment(view.subaddress(Network::Mainnet, subaddress), 5);
       (builder.build().unwrap(), (scanner, subaddress))
     },
-    |_rpc: SRR, block, tx: Transaction, _, mut state: (Scanner, SubaddressIndex)| async move {
+    async |_rpc: Rpc, block, tx: Transaction, _, mut state: (Scanner, SubaddressIndex)| {
       let output = state.0.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -53,7 +54,7 @@ test!(
 test!(
   scan_integrated_address,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let view = runner::random_address().1;
       let scanner = Scanner::new(view.clone());
 
@@ -63,7 +64,7 @@ test!(
       builder.add_payment(view.legacy_integrated_address(Network::Mainnet, payment_id), 5);
       (builder.build().unwrap(), (scanner, payment_id))
     },
-    |_rpc: SRR, block, tx: Transaction, _, mut state: (Scanner, [u8; 8])| async move {
+    async |_rpc: Rpc, block, tx: Transaction, _, mut state: (Scanner, [u8; 8])| {
       let output = state.0.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -75,13 +76,13 @@ test!(
 test!(
   scan_guaranteed,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let view = runner::random_guaranteed_address().1;
       let scanner = GuaranteedScanner::new(view.clone());
       builder.add_payment(view.address(Network::Mainnet, None, None), 5);
       (builder.build().unwrap(), scanner)
     },
-    |_rpc: SRR, block, tx: Transaction, _, mut scanner: GuaranteedScanner| async move {
+    async |_rpc: Rpc, block, tx: Transaction, _, mut scanner: GuaranteedScanner| {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -93,7 +94,7 @@ test!(
 test!(
   scan_guaranteed_subaddress,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let subaddress = SubaddressIndex::new(0, 2).unwrap();
 
       let view = runner::random_guaranteed_address().1;
@@ -103,7 +104,7 @@ test!(
       builder.add_payment(view.address(Network::Mainnet, Some(subaddress), None), 5);
       (builder.build().unwrap(), (scanner, subaddress))
     },
-    |_rpc: SRR, block, tx: Tx, _, mut state: (GuaranteedScanner, SubaddressIndex)| async move {
+    async |_rpc: Rpc, block, tx: Tx, _, mut state: (GuaranteedScanner, SubaddressIndex)| {
       let output = state.0.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -115,7 +116,7 @@ test!(
 test!(
   scan_guaranteed_integrated,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let view = runner::random_guaranteed_address().1;
       let scanner = GuaranteedScanner::new(view.clone());
       let mut payment_id = [0u8; 8];
@@ -124,7 +125,7 @@ test!(
       builder.add_payment(view.address(Network::Mainnet, None, Some(payment_id)), 5);
       (builder.build().unwrap(), (scanner, payment_id))
     },
-    |_rpc: SRR, block, tx: Transaction, _, mut state: (GuaranteedScanner, [u8; 8])| async move {
+    async |_rpc: Rpc, block, tx: Transaction, _, mut state: (GuaranteedScanner, [u8; 8])| {
       let output = state.0.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -136,7 +137,7 @@ test!(
 test!(
   scan_guaranteed_integrated_subaddress,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       let subaddress = SubaddressIndex::new(0, 3).unwrap();
 
       let view = runner::random_guaranteed_address().1;
@@ -149,7 +150,7 @@ test!(
       builder.add_payment(view.address(Network::Mainnet, Some(subaddress), Some(payment_id)), 5);
       (builder.build().unwrap(), (scanner, payment_id, subaddress))
     },
-    |_rpc, block, tx: Tx, _, mut state: (GuaranteedScanner, [u8; 8], SubaddressIndex)| async move {
+    async |_rpc, block, tx: Tx, _, mut state: (GuaranteedScanner, [u8; 8], SubaddressIndex)| {
       let output = state.0.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);

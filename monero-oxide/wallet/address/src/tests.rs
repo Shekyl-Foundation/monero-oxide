@@ -1,10 +1,8 @@
 use hex_literal::hex;
 
-use rand_core::{RngCore, OsRng};
+use rand_core::{RngCore as _, OsRng};
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, scalar::Scalar};
-
-use monero_io::CompressedPoint;
+use monero_ed25519::{Scalar, CompressedPoint};
 
 use crate::{Network, AddressType, MoneroAddress};
 
@@ -54,6 +52,23 @@ fn integrated_address() {
 }
 
 #[test]
+fn with_payment_id() {
+  let addr = MoneroAddress::from_str(Network::Mainnet, STANDARD).unwrap();
+  assert_eq!(addr.network(), Network::Mainnet);
+  assert_eq!(addr.kind(), &AddressType::Legacy);
+  assert!(!addr.is_subaddress());
+  assert_eq!(addr.payment_id(), None);
+  assert!(!addr.is_guaranteed());
+  assert_eq!(addr.spend.compress().to_bytes(), SPEND);
+  assert_eq!(addr.view.compress().to_bytes(), VIEW);
+  assert_eq!(addr.to_string(), STANDARD);
+
+  let integrated_addr = addr.with_payment_id(PAYMENT_ID).unwrap();
+  assert_eq!(integrated_addr.to_string(), INTEGRATED);
+  assert_eq!(integrated_addr.payment_id(), Some(PAYMENT_ID));
+}
+
+#[test]
 fn subaddress() {
   let addr = MoneroAddress::from_str(Network::Mainnet, SUBADDRESS).unwrap();
   assert_eq!(addr.network(), Network::Mainnet);
@@ -68,12 +83,13 @@ fn subaddress() {
 
 #[test]
 fn featured() {
+  let g = CompressedPoint::G.decompress().unwrap().into();
   for (network, first) in
     [(Network::Mainnet, 'C'), (Network::Testnet, 'K'), (Network::Stagenet, 'F')]
   {
     for _ in 0 .. 100 {
-      let spend = &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE;
-      let view = &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE;
+      let spend = Scalar::random(&mut OsRng).into() * g;
+      let view = Scalar::random(&mut OsRng).into() * g;
 
       for features in 0 .. (1 << 3) {
         const SUBADDRESS_FEATURE_BIT: u8 = 1;
@@ -90,13 +106,18 @@ fn featured() {
         let guaranteed = (features & GUARANTEED_FEATURE_BIT) == GUARANTEED_FEATURE_BIT;
 
         let kind = AddressType::Featured { subaddress, payment_id, guaranteed };
-        let addr = MoneroAddress::new(network, kind, spend, view);
+        let addr = MoneroAddress::new(
+          network,
+          kind,
+          CompressedPoint::from(spend.compress().to_bytes()).decompress().unwrap(),
+          CompressedPoint::from(view.compress().to_bytes()).decompress().unwrap(),
+        );
 
         assert_eq!(addr.to_string().chars().next().unwrap(), first);
         assert_eq!(MoneroAddress::from_str(network, &addr.to_string()).unwrap(), addr);
 
-        assert_eq!(addr.spend, spend);
-        assert_eq!(addr.view, view);
+        assert_eq!(addr.spend.into(), spend);
+        assert_eq!(addr.view.into(), view);
 
         assert_eq!(addr.is_subaddress(), subaddress);
         assert_eq!(addr.payment_id(), payment_id);
@@ -141,9 +162,13 @@ fn featured_vectors() {
       _ => panic!("Unknown network"),
     };
     let spend =
-      CompressedPoint(hex::decode(vector.spend).unwrap().try_into().unwrap()).decompress().unwrap();
+      CompressedPoint::from(<[u8; 32]>::try_from(hex::decode(vector.spend).unwrap()).unwrap())
+        .decompress()
+        .unwrap();
     let view =
-      CompressedPoint(hex::decode(vector.view).unwrap().try_into().unwrap()).decompress().unwrap();
+      CompressedPoint::from(<[u8; 32]>::try_from(hex::decode(vector.view).unwrap()).unwrap())
+        .decompress()
+        .unwrap();
 
     let addr = MoneroAddress::from_str(network, &vector.address).unwrap();
     assert_eq!(addr.spend, spend);

@@ -1,30 +1,37 @@
-use core::{ops::Deref, fmt};
+use core::{ops::Deref as _, fmt};
 use std_shims::{
   io, vec,
   vec::Vec,
-  string::{String, ToString},
+  string::{String, ToString as _},
+  collections::HashSet,
 };
 
-use zeroize::{Zeroize, Zeroizing};
+use subtle::ConstantTimeEq as _;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use rand_core::{RngCore, CryptoRng};
-use rand::seq::SliceRandom;
+use rand::seq::SliceRandom as _;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, Scalar};
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
+
 #[cfg(feature = "multisig")]
 use frost::FrostError;
 
 use crate::{
   io::*,
-  generators::{MAX_BULLETPROOF_COMMITMENTS, biased_hash_to_point},
+  ed25519::*,
   ringct::{
     clsag::{ClsagError, ClsagContext, Clsag},
+    bulletproofs::MAX_COMMITMENTS as MAX_BULLETPROOF_COMMITMENTS,
     RctType, RctPrunable, RctProofs,
   },
-  transaction::{INPUTS_UPPER_BOUND, Transaction},
+  transaction::{TransactionPrefix, Transaction},
   address::{Network, SubaddressIndex, MoneroAddress},
   extra::{MAX_ARBITRARY_DATA_SIZE, MAX_EXTRA_SIZE_BY_RELAY_RULE},
-  rpc::FeeRate,
+  interface::FeeRate,
   ViewPair, GuaranteedViewPair, OutputWithDecoys,
 };
 
@@ -43,28 +50,63 @@ pub(crate) fn key_image_sort(x: &CompressedPoint, y: &CompressedPoint) -> core::
   x.cmp(y).reverse()
 }
 
-#[derive(Clone, PartialEq, Eq, Zeroize)]
+#[derive(Clone, Zeroize)]
 enum ChangeEnum {
   AddressOnly(MoneroAddress),
   Standard { view_pair: ViewPair, subaddress: Option<SubaddressIndex> },
   Guaranteed { view_pair: GuaranteedViewPair, subaddress: Option<SubaddressIndex> },
 }
 
+impl PartialEq for ChangeEnum {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (ChangeEnum::AddressOnly(lhs), ChangeEnum::AddressOnly(rhs)) => lhs == rhs,
+      (
+        ChangeEnum::Standard { view_pair: lhs_vp, subaddress: lhs_s },
+        ChangeEnum::Standard { view_pair: rhs_vp, subaddress: rhs_s },
+      ) => {
+        bool::from(lhs_vp.spend.ct_eq(&rhs_vp.spend) & lhs_vp.view.ct_eq(&rhs_vp.view)) &
+          (lhs_s == rhs_s)
+      }
+      (
+        ChangeEnum::Guaranteed { view_pair: lhs_vp, subaddress: lhs_s },
+        ChangeEnum::Guaranteed { view_pair: rhs_vp, subaddress: rhs_s },
+      ) => {
+        bool::from(lhs_vp.0.spend.ct_eq(&rhs_vp.0.spend) & lhs_vp.0.view.ct_eq(&rhs_vp.0.view)) &
+          (lhs_s == rhs_s)
+      }
+      _ => false,
+    }
+  }
+}
+impl Eq for ChangeEnum {}
+
+impl ChangeEnum {
+  fn address(&self) -> MoneroAddress {
+    match self {
+      ChangeEnum::AddressOnly(addr) => *addr,
+      // Network::Mainnet as the network won't effect the derivations
+      ChangeEnum::Standard { view_pair, subaddress } => match subaddress {
+        Some(subaddress) => view_pair.subaddress(Network::Mainnet, *subaddress),
+        None => view_pair.legacy_address(Network::Mainnet),
+      },
+      ChangeEnum::Guaranteed { view_pair, subaddress } => {
+        view_pair.address(Network::Mainnet, *subaddress, None)
+      }
+    }
+  }
+}
+
 impl fmt::Debug for ChangeEnum {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match self {
+    let kind = match self {
       ChangeEnum::AddressOnly(addr) => {
-        f.debug_struct("ChangeEnum::AddressOnly").field("addr", &addr).finish()
+        return f.debug_struct("ChangeEnum::AddressOnly").field("0", &addr).finish();
       }
-      ChangeEnum::Standard { subaddress, .. } => f
-        .debug_struct("ChangeEnum::Standard")
-        .field("subaddress", &subaddress)
-        .finish_non_exhaustive(),
-      ChangeEnum::Guaranteed { subaddress, .. } => f
-        .debug_struct("ChangeEnum::Guaranteed")
-        .field("subaddress", &subaddress)
-        .finish_non_exhaustive(),
-    }
+      ChangeEnum::Standard { .. } => "ChangeEnum::Standard",
+      ChangeEnum::Guaranteed { .. } => "ChangeEnum::Guaranteed",
+    };
+    f.debug_struct(kind).field("0", &self.address()).finish_non_exhaustive()
   }
 }
 
@@ -95,7 +137,7 @@ impl Change {
   ///
   /// If the change address is Some, this will be unable to optimize the transaction as the
   /// Monero wallet protocol expects it can (due to presumably having the view key for the change
-  /// output). If a transaction should be optimized, and isn'tm it will be fingerprintable.
+  /// output). If a transaction should be optimized, and isn't, it will be fingerprintable.
   ///
   /// If the change address is None, there are two fingerprints:
   ///
@@ -106,12 +148,9 @@ impl Change {
   ///    differentiating if transactions send to addresses with payment IDs or not. monero-wallet
   ///    includes a dummy payment ID which at least one recipient will identify as not the expected
   ///    dummy payment ID, revealing to the recipient(s) the sender is using non-wallet2 software.
+  ///
   pub fn fingerprintable(address: Option<MoneroAddress>) -> Change {
-    if let Some(address) = address {
-      Change(Some(ChangeEnum::AddressOnly(address)))
-    } else {
-      Change(None)
-    }
+    Change(address.map(ChangeEnum::AddressOnly))
   }
 }
 
@@ -125,17 +164,7 @@ impl InternalPayment {
   fn address(&self) -> MoneroAddress {
     match self {
       InternalPayment::Payment(addr, _) => *addr,
-      InternalPayment::Change(change) => match change {
-        ChangeEnum::AddressOnly(addr) => *addr,
-        // Network::Mainnet as the network won't effect the derivations
-        ChangeEnum::Standard { view_pair, subaddress } => match subaddress {
-          Some(subaddress) => view_pair.subaddress(Network::Mainnet, *subaddress),
-          None => view_pair.legacy_address(Network::Mainnet),
-        },
-        ChangeEnum::Guaranteed { view_pair, subaddress } => {
-          view_pair.address(Network::Mainnet, *subaddress, None)
-        }
-      },
+      InternalPayment::Change(change) => change.address(),
     }
   }
 }
@@ -149,6 +178,9 @@ pub enum SendError {
   /// The transaction had no inputs specified.
   #[error("no inputs")]
   NoInputs,
+  /// The provided inputs were invalid.
+  #[error("invalid inputs")]
+  InvalidInputs,
   /// The decoy quantity was invalid for the specified RingCT type.
   #[error("invalid number of decoys")]
   InvalidDecoyQuantity,
@@ -215,7 +247,7 @@ pub enum SendError {
 }
 
 /// A signable transaction.
-#[derive(Clone, PartialEq, Eq, Zeroize)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SignableTransaction {
   rct_type: RctType,
   outgoing_view_key: Zeroizing<[u8; 32]>,
@@ -225,7 +257,21 @@ pub struct SignableTransaction {
   fee_rate: FeeRate,
 }
 
+impl PartialEq for SignableTransaction {
+  fn eq(&self, other: &Self) -> bool {
+    (self.rct_type == other.rct_type) &&
+      bool::from(self.outgoing_view_key.deref().ct_eq(other.outgoing_view_key.deref())) &&
+      (self.inputs == other.inputs) &&
+      (self.payments == other.payments) &&
+      (self.data == other.data) &&
+      (self.fee_rate == other.fee_rate)
+  }
+}
+impl Eq for SignableTransaction {}
+
 impl fmt::Debug for SignableTransaction {
+  /// This `Debug` implementation may run in variable time and reveal everything except the
+  /// `outgoing_view_key`.
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.debug_struct("SignableTransaction")
       .field("rct_type", &self.rct_type)
@@ -237,6 +283,7 @@ impl fmt::Debug for SignableTransaction {
   }
 }
 
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct SignableTransactionWithKeyImages {
   intent: SignableTransaction,
   key_images: Vec<CompressedPoint>,
@@ -246,18 +293,43 @@ impl SignableTransaction {
   fn validate(&self) -> Result<(), SendError> {
     match self.rct_type {
       RctType::ClsagBulletproof | RctType::ClsagBulletproofPlus => {}
-      _ => Err(SendError::UnsupportedRctType)?,
+      RctType::AggregateMlsagBorromean |
+      RctType::MlsagBorromean |
+      RctType::MlsagBulletproofs |
+      RctType::MlsagBulletproofsCompactAmount => Err(SendError::UnsupportedRctType)?,
     }
 
     if self.inputs.is_empty() {
       Err(SendError::NoInputs)?;
     }
+    if self.inputs.iter().map(|input| input.key().compress()).collect::<HashSet<_>>().len() !=
+      self.inputs.len()
+    {
+      Err(SendError::InvalidInputs)?;
+    }
     for input in &self.inputs {
+      // Checks for outputs we won't scan but are unusable if passed here
+      {
+        let key = input.key().into();
+        // Reject keys with torsion, which would need a bespoke signing algorithm to be complete
+        if !key.is_torsion_free() {
+          Err(SendError::InvalidInputs)?;
+        }
+        // Reject keys which are the identity and accordingly lack a usable a key image
+        use curve25519_dalek::traits::IsIdentity as _;
+        if key.is_identity() {
+          Err(SendError::InvalidInputs)?;
+        }
+      }
+
       if input.decoys().len() !=
         match self.rct_type {
           RctType::ClsagBulletproof => 11,
           RctType::ClsagBulletproofPlus => 16,
-          _ => panic!("unsupported RctType"),
+          RctType::AggregateMlsagBorromean |
+          RctType::MlsagBorromean |
+          RctType::MlsagBulletproofs |
+          RctType::MlsagBulletproofsCompactAmount => panic!("unsupported RctType"),
         }
       {
         Err(SendError::InvalidDecoyQuantity)?;
@@ -369,6 +441,12 @@ impl SignableTransaction {
   ///
   /// `data` represents arbitrary data which will be embedded into the transaction's `extra` field.
   /// Please see `Extra::arbitrary_data` for the full impacts of this.
+  ///
+  /// This will attempt to sign a transaction as constructed, even if the arguments are
+  /// inconsistent or invalid for some view of the Monero network. It is the caller's
+  /// responsibility to ensure their sanity.
+  ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn new(
     rct_type: RctType,
     outgoing_view_key: Zeroizing<[u8; 32]>,
@@ -417,7 +495,7 @@ impl SignableTransaction {
   /// Write a SignableTransaction.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn write<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
     fn write_payment<W: io::Write>(payment: &InternalPayment, w: &mut W) -> io::Result<()> {
       match payment {
@@ -433,8 +511,8 @@ impl SignableTransaction {
           }
           ChangeEnum::Standard { view_pair, subaddress } => {
             w.write_all(&[2])?;
-            write_point(&view_pair.spend(), w)?;
-            write_scalar(&view_pair.view, w)?;
+            view_pair.spend().compress().write(w)?;
+            view_pair.view.write(w)?;
             if let Some(subaddress) = subaddress {
               w.write_all(&subaddress.account().to_le_bytes())?;
               w.write_all(&subaddress.address().to_le_bytes())
@@ -445,8 +523,8 @@ impl SignableTransaction {
           }
           ChangeEnum::Guaranteed { view_pair, subaddress } => {
             w.write_all(&[3])?;
-            write_point(&view_pair.spend(), w)?;
-            write_scalar(&view_pair.0.view, w)?;
+            view_pair.spend().compress().write(w)?;
+            view_pair.0.view.write(w)?;
             if let Some(subaddress) = subaddress {
               w.write_all(&subaddress.account().to_le_bytes())?;
               w.write_all(&subaddress.address().to_le_bytes())
@@ -470,7 +548,7 @@ impl SignableTransaction {
   /// Serialize the SignableTransaction to a `Vec<u8>`.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn serialize(&self) -> Vec<u8> {
     let mut buf = Vec::with_capacity(256);
     self.write(&mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
@@ -480,46 +558,10 @@ impl SignableTransaction {
   /// Read a `SignableTransaction`.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn read<R: io::Read>(r: &mut R) -> io::Result<SignableTransaction> {
     fn read_address<R: io::Read>(r: &mut R) -> io::Result<MoneroAddress> {
-      /*
-        This uses featured addresses for a bound as they'll always be potentially larger than
-        traditional addresses.
-
-        https://gist.github.com/kayabaNerve/01c50bbc35441e0bbdcee63a9d823789
-      */
-      const FEATURED_ADDRESS_DATA_SIZE_UPPER_BOUND: usize = 9 + 32 + 32 + 9 + 8;
-      // Checksum
-      const FEATURED_ADDRESS_CHECKED_DATA_SIZE_UPPER_BOUND: usize =
-        FEATURED_ADDRESS_DATA_SIZE_UPPER_BOUND + 4;
-      // Base58-encoding, using 5 for `log2(58)`
-      const FEATURED_ADDRESS_ENCODED_SIZE_UPPER_BOUND: usize =
-        (FEATURED_ADDRESS_CHECKED_DATA_SIZE_UPPER_BOUND * 8).div_ceil(5);
-
-      /*
-        https://gist.github.com/tevador
-          /50160d160d24cfc6c52ae02eb3d17024?permalink_comment_id=4744307#gistcomment-4744307
-        notes one JAMTIS proposal which used 247 bytes, while most are 244 bytes. JAMTIS-RCT is
-        244 (https://gist.github.com/tevador/d3656a217c0177c160b9b6219d9ebb96).
-      */
-      const JAMTIS_ADDRESS_ENCODED_SIZE: usize = 247;
-
-      const fn const_max(a: usize, b: usize) -> usize {
-        if a > b {
-          a
-        } else {
-          b
-        }
-      }
-      const ADDRESS_ENCODED_SIZE_UPPER_BOUND: usize =
-        const_max(FEATURED_ADDRESS_ENCODED_SIZE_UPPER_BOUND, JAMTIS_ADDRESS_ENCODED_SIZE);
-
-      const ADDRESS_ENCODED_SIZE_SAFETY_FACTOR: usize = 2;
-      const ADDRESS_ENCODED_SIZE_BOUND: usize =
-        ADDRESS_ENCODED_SIZE_SAFETY_FACTOR * ADDRESS_ENCODED_SIZE_UPPER_BOUND;
-
-      String::from_utf8(read_vec(read_byte, Some(ADDRESS_ENCODED_SIZE_BOUND), r)?)
+      String::from_utf8(read_vec(read_byte, Some(MoneroAddress::SIZE_UPPER_BOUND.0), r)?)
         .ok()
         .and_then(|str| MoneroAddress::from_str_with_unchecked_network(&str).ok())
         .ok_or_else(|| io::Error::other("invalid address"))
@@ -530,13 +572,23 @@ impl SignableTransaction {
         0 => InternalPayment::Payment(read_address(r)?, read_u64(r)?),
         1 => InternalPayment::Change(ChangeEnum::AddressOnly(read_address(r)?)),
         2 => InternalPayment::Change(ChangeEnum::Standard {
-          view_pair: ViewPair::new(read_point(r)?, Zeroizing::new(read_scalar(r)?))
-            .map_err(io::Error::other)?,
+          view_pair: ViewPair::new(
+            CompressedPoint::read(r)?
+              .decompress()
+              .ok_or_else(|| io::Error::other("`Change` payment had invalid public spend key"))?,
+            Zeroizing::new(Scalar::read(r)?),
+          )
+          .map_err(io::Error::other)?,
           subaddress: SubaddressIndex::new(read_u32(r)?, read_u32(r)?),
         }),
         3 => InternalPayment::Change(ChangeEnum::Guaranteed {
-          view_pair: GuaranteedViewPair::new(read_point(r)?, Zeroizing::new(read_scalar(r)?))
-            .map_err(io::Error::other)?,
+          view_pair: GuaranteedViewPair::new(
+            CompressedPoint::read(r)?.decompress().ok_or_else(|| {
+              io::Error::other("guaranteed `Change` payment had invalid public spend key")
+            })?,
+            Zeroizing::new(Scalar::read(r)?),
+          )
+          .map_err(io::Error::other)?,
           subaddress: SubaddressIndex::new(read_u32(r)?, read_u32(r)?),
         }),
         _ => Err(io::Error::other("invalid payment"))?,
@@ -547,7 +599,7 @@ impl SignableTransaction {
       rct_type: RctType::try_from(read_byte(r)?)
         .map_err(|()| io::Error::other("unsupported/invalid RctType"))?,
       outgoing_view_key: Zeroizing::new(read_bytes(r)?),
-      inputs: read_vec(OutputWithDecoys::read, Some(INPUTS_UPPER_BOUND), r)?,
+      inputs: read_vec(OutputWithDecoys::read, Some(TransactionPrefix::INPUTS_UPPER_BOUND.0), r)?,
       payments: read_vec(read_payment, Some(MAX_BULLETPROOF_COMMITMENTS), r)?,
       /*
         This doesn't assert the _total_ length is `< MAX_EXTRA_SIZE_BY_RELAY_RULE`, yet the
@@ -569,17 +621,15 @@ impl SignableTransaction {
 
   fn with_key_images(
     mut self,
-    key_images: Vec<CompressedPoint>,
+    mut key_images: Vec<CompressedPoint>,
   ) -> SignableTransactionWithKeyImages {
     debug_assert_eq!(self.inputs.len(), key_images.len());
 
     // Sort the inputs by their key images
-    let mut sorted_inputs = self.inputs.into_iter().zip(key_images).collect::<Vec<_>>();
+    let mut sorted_inputs = self.inputs.drain(..).zip(key_images.drain(..)).collect::<Vec<_>>();
     sorted_inputs
       .sort_by(|(_, key_image_a), (_, key_image_b)| key_image_sort(key_image_a, key_image_b));
 
-    self.inputs = Vec::with_capacity(sorted_inputs.len());
-    let mut key_images = Vec::with_capacity(sorted_inputs.len());
     for (input, key_image) in sorted_inputs {
       self.inputs.push(input);
       key_images.push(key_image);
@@ -588,21 +638,37 @@ impl SignableTransaction {
     SignableTransactionWithKeyImages { intent: self, key_images }
   }
 
+  /// Fetch what the transaction will be, without its signatures (and associated fields).
+  ///
+  /// This returns `None` if an improper amount of key images is provided.
+  pub fn unsigned_transaction(self, key_images: Vec<CompressedPoint>) -> Option<Transaction> {
+    if self.inputs.len() != key_images.len() {
+      None?;
+    }
+    Some(self.with_key_images(key_images).transaction_without_signatures())
+  }
+
   /// Sign this transaction.
+  ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn sign(
     self,
     rng: &mut (impl RngCore + CryptoRng),
     sender_spend_key: &Zeroizing<Scalar>,
   ) -> Result<Transaction, SendError> {
+    let sender_spend_key = Zeroizing::new((**sender_spend_key).into());
+
     // Calculate the key images
     let mut key_images = vec![];
     for input in &self.inputs {
-      let input_key = Zeroizing::new(sender_spend_key.deref() + input.key_offset());
-      if (input_key.deref() * ED25519_BASEPOINT_TABLE) != input.key() {
+      let input_key = Zeroizing::new(sender_spend_key.deref() + input.key_offset().into());
+      if bool::from(!(input_key.deref() * ED25519_BASEPOINT_TABLE).ct_eq(&input.key().into())) {
         Err(SendError::WrongPrivateKey)?;
       }
-      let key_image = input_key.deref() * biased_hash_to_point(input.key().compress().to_bytes());
-      key_images.push(CompressedPoint::from(key_image.compress()));
+      let key_image = Point::from(
+        input_key.deref() * Point::biased_hash(input.key().compress().to_bytes()).into(),
+      );
+      key_images.push(key_image.compress());
     }
 
     // Convert to a SignableTransactionWithKeyImages
@@ -612,7 +678,8 @@ impl SignableTransaction {
     let mut clsag_signs = Vec::with_capacity(tx.intent.inputs.len());
     for input in &tx.intent.inputs {
       // Re-derive the input key as this will be in a different order
-      let input_key = Zeroizing::new(sender_spend_key.deref() + input.key_offset());
+      let input_key =
+        Zeroizing::new(Scalar::from(sender_spend_key.deref() + input.key_offset().into()));
       clsag_signs.push((
         input_key,
         ClsagContext::new(input.decoys().clone(), input.commitment().clone())
@@ -652,7 +719,7 @@ impl SignableTransaction {
     *pseudo_outs = Vec::with_capacity(inputs_len);
     for (clsag, pseudo_out) in clsags_and_pseudo_outs {
       clsags.push(clsag);
-      pseudo_outs.push(CompressedPoint::from(pseudo_out.compress()));
+      pseudo_outs.push(pseudo_out.compress());
     }
 
     // Return the signed TX

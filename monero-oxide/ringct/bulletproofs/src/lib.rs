@@ -1,21 +1,23 @@
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(non_snake_case)]
 
 use std_shims::{
-  vec::Vec,
+  prelude::*,
+  sync::LazyLock,
   io::{self, Read, Write},
 };
 
 use rand_core::{RngCore, CryptoRng};
 use zeroize::Zeroizing;
 
+use curve25519_dalek::EdwardsPoint;
+
 use monero_io::*;
-pub use monero_generators::MAX_BULLETPROOF_COMMITMENTS as MAX_COMMITMENTS;
-use monero_generators::COMMITMENT_BITS;
-use monero_primitives::Commitment;
+use monero_ed25519::*;
+pub use monero_bulletproofs_generators::MAX_BULLETPROOF_COMMITMENTS as MAX_COMMITMENTS;
+use monero_bulletproofs_generators::COMMITMENT_BITS;
 
 pub(crate) mod scalar_vector;
 pub(crate) mod point_vector;
@@ -42,9 +44,16 @@ use crate::plus::{
 mod tests;
 
 // The logarithm (over 2) of the amount of bits a value within a commitment may use.
+#[allow(clippy::as_conversions)]
 const LOG_COMMITMENT_BITS: usize = COMMITMENT_BITS.ilog2() as usize;
 // The maximum length of L/R `Vec`s.
+#[allow(clippy::as_conversions)]
 const MAX_LR: usize = (MAX_COMMITMENTS.ilog2() as usize) + LOG_COMMITMENT_BITS;
+
+// A static for `H` as it's frequently used yet this decompression is expensive.
+static MONERO_H: LazyLock<EdwardsPoint> = LazyLock::new(|| {
+  CompressedPoint::H.decompress().expect("couldn't decompress `CompressedPoint::H`").into()
+});
 
 /// An error from proving/verifying Bulletproofs(+).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
@@ -110,6 +119,8 @@ impl Bulletproof {
   }
 
   /// Prove the list of commitments are within [0 .. 2^64) with an aggregate Bulletproof.
+  ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn prove<R: RngCore + CryptoRng>(
     rng: &mut R,
     outputs: Vec<Commitment>,
@@ -120,7 +131,8 @@ impl Bulletproof {
     if outputs.len() > MAX_COMMITMENTS {
       Err(BulletproofError::TooManyCommitments)?;
     }
-    let commitments = outputs.iter().map(Commitment::calculate).collect::<Vec<_>>();
+    let commitments =
+      outputs.iter().map(|commitment| commitment.commit().into()).collect::<Vec<_>>();
     Ok(Bulletproof::Original(
       OriginalStatement::new(&commitments)
         .expect("failed to create statement despite checking amount of commitments")
@@ -136,6 +148,8 @@ impl Bulletproof {
   }
 
   /// Prove the list of commitments are within [0 .. 2^64) with an aggregate Bulletproof+.
+  ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn prove_plus<R: RngCore + CryptoRng>(
     rng: &mut R,
     outputs: Vec<Commitment>,
@@ -146,7 +160,8 @@ impl Bulletproof {
     if outputs.len() > MAX_COMMITMENTS {
       Err(BulletproofError::TooManyCommitments)?;
     }
-    let commitments = outputs.iter().map(Commitment::calculate).collect::<Vec<_>>();
+    let commitments =
+      outputs.iter().map(|commitment| commitment.commit().into()).collect::<Vec<_>>();
     Ok(Bulletproof::Plus(
       PlusStatement::new(&commitments)
         .expect("failed to create statement despite checking amount of commitments")
@@ -168,8 +183,10 @@ impl Bulletproof {
     rng: &mut R,
     commitments: &[CompressedPoint],
   ) -> bool {
-    let Some(commitments) =
-      commitments.iter().map(CompressedPoint::decompress).collect::<Option<Vec<_>>>()
+    let Some(commitments) = commitments
+      .iter()
+      .map(|point| point.decompress().map(Point::into))
+      .collect::<Option<Vec<_>>>()
     else {
       return false;
     };
@@ -213,8 +230,10 @@ impl Bulletproof {
     verifier: &mut BatchVerifier,
     commitments: &[CompressedPoint],
   ) -> bool {
-    let Some(commitments) =
-      commitments.iter().map(CompressedPoint::decompress).collect::<Option<Vec<_>>>()
+    let Some(commitments) = commitments
+      .iter()
+      .map(|point| point.decompress().map(Point::into))
+      .collect::<Option<Vec<_>>>()
     else {
       return false;
     };
@@ -235,6 +254,8 @@ impl Bulletproof {
     }
   }
 
+  // This uses `write_all(scalar.to_bytes())` as these are `curve25519_dalek::Scalar`, not
+  // `monero_ed25519::Scalar`
   fn write_core<W: Write, F: Fn(&[CompressedPoint], &mut W) -> io::Result<()>>(
     &self,
     w: &mut W,
@@ -242,26 +263,26 @@ impl Bulletproof {
   ) -> io::Result<()> {
     match self {
       Bulletproof::Original(bp) => {
-        CompressedPoint::write(&bp.A, w)?;
-        CompressedPoint::write(&bp.S, w)?;
-        CompressedPoint::write(&bp.T1, w)?;
-        CompressedPoint::write(&bp.T2, w)?;
-        write_scalar(&bp.tau_x, w)?;
-        write_scalar(&bp.mu, w)?;
+        bp.A.write(w)?;
+        bp.S.write(w)?;
+        bp.T1.write(w)?;
+        bp.T2.write(w)?;
+        w.write_all(&bp.tau_x.to_bytes())?;
+        w.write_all(&bp.mu.to_bytes())?;
         specific_write_vec(&bp.ip.L, w)?;
         specific_write_vec(&bp.ip.R, w)?;
-        write_scalar(&bp.ip.a, w)?;
-        write_scalar(&bp.ip.b, w)?;
-        write_scalar(&bp.t_hat, w)
+        w.write_all(&bp.ip.a.to_bytes())?;
+        w.write_all(&bp.ip.b.to_bytes())?;
+        w.write_all(&bp.t_hat.to_bytes())
       }
 
       Bulletproof::Plus(bp) => {
-        CompressedPoint::write(&bp.A, w)?;
-        CompressedPoint::write(&bp.wip.A, w)?;
-        CompressedPoint::write(&bp.wip.B, w)?;
-        write_scalar(&bp.wip.r_answer, w)?;
-        write_scalar(&bp.wip.s_answer, w)?;
-        write_scalar(&bp.wip.delta_answer, w)?;
+        bp.A.write(w)?;
+        bp.wip.A.write(w)?;
+        bp.wip.B.write(w)?;
+        w.write_all(&bp.wip.r_answer.to_bytes())?;
+        w.write_all(&bp.wip.s_answer.to_bytes())?;
+        w.write_all(&bp.wip.delta_answer.to_bytes())?;
         specific_write_vec(&bp.wip.L, w)?;
         specific_write_vec(&bp.wip.R, w)
       }
@@ -294,15 +315,15 @@ impl Bulletproof {
       S: CompressedPoint::read(r)?,
       T1: CompressedPoint::read(r)?,
       T2: CompressedPoint::read(r)?,
-      tau_x: read_scalar(r)?,
-      mu: read_scalar(r)?,
+      tau_x: Scalar::read(r)?.into(),
+      mu: Scalar::read(r)?.into(),
       ip: IpProof {
         L: read_vec(CompressedPoint::read, Some(MAX_LR), r)?,
         R: read_vec(CompressedPoint::read, Some(MAX_LR), r)?,
-        a: read_scalar(r)?,
-        b: read_scalar(r)?,
+        a: Scalar::read(r)?.into(),
+        b: Scalar::read(r)?.into(),
       },
-      t_hat: read_scalar(r)?,
+      t_hat: Scalar::read(r)?.into(),
     }))
   }
 
@@ -313,9 +334,9 @@ impl Bulletproof {
       wip: WipProof {
         A: CompressedPoint::read(r)?,
         B: CompressedPoint::read(r)?,
-        r_answer: read_scalar(r)?,
-        s_answer: read_scalar(r)?,
-        delta_answer: read_scalar(r)?,
+        r_answer: Scalar::read(r)?.into(),
+        s_answer: Scalar::read(r)?.into(),
+        delta_answer: Scalar::read(r)?.into(),
         L: read_vec(CompressedPoint::read, Some(MAX_LR), r)?,
         R: read_vec(CompressedPoint::read, Some(MAX_LR), r)?,
       },

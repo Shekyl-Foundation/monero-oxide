@@ -2,7 +2,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use monero_wallet::{
   ringct::RctType,
-  rpc::FeeRate,
+  interface::FeeRate,
   address::MoneroAddress,
   OutputWithDecoys,
   send::{Change, SendError, SignableTransaction},
@@ -49,6 +49,7 @@ impl SignableTransactionBuilder {
     self
   }
 
+  #[expect(clippy::large_types_passed_by_value)]
   pub fn add_payment(&mut self, dest: MoneroAddress, amount: u64) -> &mut Self {
     self.payments.push((dest, amount));
     self

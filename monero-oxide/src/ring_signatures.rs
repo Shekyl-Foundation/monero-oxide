@@ -5,10 +5,9 @@ use std_shims::{
 
 use zeroize::Zeroize;
 
-use curve25519_dalek::{EdwardsPoint, Scalar};
+use crate::{io::*, ed25519::*};
 
-use crate::{io::*, generators::biased_hash_to_point, primitives::keccak256_to_scalar};
-
+#[cfg_attr(not(test), expect(clippy::cfg_not_test))]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub(crate) struct Signature {
   #[cfg(test)]
@@ -23,19 +22,20 @@ pub(crate) struct Signature {
 
 impl Signature {
   fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
-    write_scalar(&self.c, w)?;
-    write_scalar(&self.s, w)?;
+    self.c.write(w)?;
+    self.s.write(w)?;
     Ok(())
   }
 
   fn read<R: Read>(r: &mut R) -> io::Result<Signature> {
-    Ok(Signature { c: read_scalar(r)?, s: read_scalar(r)? })
+    Ok(Signature { c: Scalar::read(r)?, s: Scalar::read(r)? })
   }
 }
 
 /// A ring signature.
 ///
 /// This was used by the original Cryptonote transaction protocol and was deprecated with RingCT.
+#[cfg_attr(not(test), expect(clippy::cfg_not_test))]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct RingSignature {
   #[cfg(test)]
@@ -59,9 +59,13 @@ impl RingSignature {
   }
 
   /// Verify the ring signature.
+  ///
+  /// WARNING: This follows the Fiat-Shamir transcript format used by the Monero protocol, which
+  /// makes assumptions on what has already been transcripted and bound to within `msg_hash`. Do
+  /// not use this if you don't know what you're doing.
   pub fn verify(
     &self,
-    msg: &[u8; 32],
+    msg_hash: &[u8; 32],
     ring: &[CompressedPoint],
     key_image: &CompressedPoint,
   ) -> bool {
@@ -72,15 +76,14 @@ impl RingSignature {
     let Some(key_image) = key_image.decompress() else {
       return false;
     };
-
-    if !key_image.is_torsion_free() {
+    let Some(key_image) = key_image.key_image() else {
       return false;
-    }
+    };
 
     let mut buf = Vec::with_capacity(32 + (2 * 32 * ring.len()));
-    buf.extend_from_slice(msg);
+    buf.extend_from_slice(msg_hash);
 
-    let mut sum = Scalar::ZERO;
+    let mut sum = curve25519_dalek::Scalar::ZERO;
     for (ring_member, sig) in ring.iter().zip(&self.sigs) {
       /*
         The traditional Schnorr signature is:
@@ -104,16 +107,20 @@ impl RingSignature {
         return false;
       };
 
-      #[allow(non_snake_case)]
-      let Li =
-        EdwardsPoint::vartime_double_scalar_mul_basepoint(&sig.c, &decomp_ring_member, &sig.s);
+      #[expect(non_snake_case)]
+      let Li = curve25519_dalek::EdwardsPoint::vartime_double_scalar_mul_basepoint(
+        &sig.c.into(),
+        &decomp_ring_member.into(),
+        &sig.s.into(),
+      );
       buf.extend_from_slice(Li.compress().as_bytes());
-      #[allow(non_snake_case)]
-      let Ri = (sig.s * biased_hash_to_point(ring_member.to_bytes())) + (sig.c * key_image);
+      #[expect(non_snake_case)]
+      let Ri = (sig.s.into() * Point::biased_hash(ring_member.to_bytes()).into()) +
+        (sig.c.into() * key_image);
       buf.extend_from_slice(Ri.compress().as_bytes());
 
-      sum += sig.c;
+      sum += sig.c.into();
     }
-    sum == keccak256_to_scalar(buf)
+    Scalar::from(sum) == Scalar::hash(buf)
   }
 }

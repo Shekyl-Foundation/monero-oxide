@@ -1,31 +1,26 @@
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
-
-use curve25519_dalek::scalar::Scalar;
 
 use serde::Deserialize;
 use serde_json::json;
 
 use monero_oxide::{
-  primitives::Commitment,
+  ed25519::{Scalar, CompressedPoint, Commitment},
   ringct::{RctPrunable, bulletproofs::BatchVerifier},
   transaction::{Input, Transaction},
   block::Block,
-  io::CompressedPoint,
 };
 
-use monero_rpc::{RpcError, Rpc};
-use monero_simple_request_rpc::SimpleRequestRpc;
+use monero_simple_request_rpc::{prelude::*, SimpleRequestTransport};
 
 use tokio::task::JoinHandle;
 
-async fn check_block(rpc: impl Rpc, block_i: usize) {
+async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
   let hash = loop {
-    match rpc.get_block_hash(block_i).await {
+    match rpc.block_hash(block_i).await {
       Ok(hash) => break hash,
-      Err(RpcError::ConnectionError(e)) => {
-        println!("get_block_hash ConnectionError: {e}");
+      Err(InterfaceError::InterfaceError(e)) => {
+        println!("get_block_hash InterfaceError: {e}");
         continue;
       }
       Err(e) => panic!("couldn't get block {block_i}'s hash: {e:?}"),
@@ -38,10 +33,17 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
     blob: String,
   }
   let res: BlockResponse = loop {
-    match rpc.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await {
-      Ok(res) => break res,
-      Err(RpcError::ConnectionError(e)) => {
-        println!("get_block ConnectionError: {e}");
+    match rpc
+      .json_rpc_call(
+        "get_block",
+        Some(json!({ "hash": hex::encode(hash) }).to_string()),
+        usize::MAX,
+      )
+      .await
+    {
+      Ok(res) => break serde_json::from_str(&res).unwrap(),
+      Err(InterfaceError::InterfaceError(e)) => {
+        println!("get_block InterfaceError: {e}");
         continue;
       }
       Err(e) => panic!("couldn't get block {block_i} via block.hash(): {e:?}"),
@@ -59,10 +61,10 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
   if !block.transactions.is_empty() {
     // Test getting pruned transactions
     loop {
-      match rpc.get_pruned_transactions(&block.transactions).await {
+      match rpc.pruned_transactions(&block.transactions).await {
         Ok(_) => break,
-        Err(RpcError::ConnectionError(e)) => {
-          println!("get_pruned_transactions ConnectionError: {e}");
+        Err(TransactionsError::InterfaceError(InterfaceError::InterfaceError(e))) => {
+          println!("get_pruned_transactions InterfaceError: {e}");
           continue;
         }
         Err(e) => panic!("couldn't call get_pruned_transactions: {e:?}"),
@@ -70,10 +72,10 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
     }
 
     let txs = loop {
-      match rpc.get_transactions(&block.transactions).await {
+      match rpc.transactions(&block.transactions).await {
         Ok(txs) => break txs,
-        Err(RpcError::ConnectionError(e)) => {
-          println!("get_transactions ConnectionError: {e}");
+        Err(TransactionsError::InterfaceError(InterfaceError::InterfaceError(e))) => {
+          println!("get_transactions InterfaceError: {e}");
           continue;
         }
         Err(e) => panic!("couldn't call get_transactions: {e:?}"),
@@ -129,8 +131,8 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
                   actual_indexes.push(running_sum);
                 }
 
-                async fn get_outs(
-                  rpc: &impl Rpc,
+                async fn get_outs<T: HttpTransport>(
+                  rpc: &MoneroDaemon<T>,
                   amount: u64,
                   indexes: &[u64],
                 ) -> Vec<[CompressedPoint; 2]> {
@@ -149,19 +151,23 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
                     match rpc
                       .rpc_call(
                         "get_outs",
-                        Some(json!({
-                          "get_txid": true,
-                          "outputs": indexes.iter().map(|o| json!({
-                            "amount": amount,
-                            "index": o
-                          })).collect::<Vec<_>>()
-                        })),
+                        Some(
+                          json!({
+                            "get_txid": true,
+                            "outputs": indexes.iter().map(|o| json!({
+                              "amount": amount,
+                              "index": o
+                            })).collect::<Vec<_>>()
+                          })
+                          .to_string(),
+                        ),
+                        usize::MAX,
                       )
                       .await
                     {
-                      Ok(outs) => break outs,
-                      Err(RpcError::ConnectionError(e)) => {
-                        println!("get_outs ConnectionError: {e}");
+                      Ok(outs) => break serde_json::from_str(&outs).unwrap(),
+                      Err(InterfaceError::InterfaceError(e)) => {
+                        println!("get_outs InterfaceError: {e}");
                         continue;
                       }
                       Err(e) => panic!("couldn't connect to RPC to get outs: {e:?}"),
@@ -169,11 +175,11 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
                   };
 
                   let rpc_point = |point: &str| {
-                    CompressedPoint(
-                      hex::decode(point)
-                        .expect("invalid hex for ring member")
-                        .try_into()
-                        .expect("invalid point len for ring member"),
+                    CompressedPoint::from(
+                      <[u8; 32]>::try_from(
+                        hex::decode(point).expect("invalid hex for ring member"),
+                      )
+                      .expect("invalid point len for ring member"),
                     )
                   };
 
@@ -183,12 +189,7 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
                     .map(|out| {
                       let mask = rpc_point(&out.mask);
                       if amount != 0 {
-                        assert_eq!(
-                          mask,
-                          CompressedPoint::from(
-                            Commitment::new(Scalar::from(1u8), amount).calculate().compress()
-                          )
-                        );
+                        assert_eq!(mask, Commitment::new(Scalar::ONE, amount).commit().compress());
                       }
                       [rpc_point(&out.key), mask]
                     })
@@ -225,28 +226,27 @@ async fn main() {
 
   // How many blocks to work on at once
   let async_parallelism: usize =
-    args.get(2).unwrap_or(&"8".to_string()).parse::<usize>().expect("invalid parallelism argument");
+    args.get(2).unwrap_or(&"8".to_owned()).parse::<usize>().expect("invalid parallelism argument");
 
   // Read further args as RPC URLs
   let default_nodes = vec![
-    "http://xmr-node-uk.cakewallet.com:18081".to_string(),
-    "http://xmr-node-eu.cakewallet.com:18081".to_string(),
+    "http://xmr-node-uk.cakewallet.com:18081".to_owned(),
+    "http://xmr-node-eu.cakewallet.com:18081".to_owned(),
   ];
   let mut specified_nodes = vec![];
   {
     let mut i = 0;
-    loop {
-      let Some(node) = args.get(3 + i) else { break };
+    while let Some(node) = args.get(3 + i) {
       specified_nodes.push(node.clone());
       i += 1;
     }
   }
   let nodes = if specified_nodes.is_empty() { default_nodes } else { specified_nodes };
 
-  let rpc = |url: String| async move {
-    SimpleRequestRpc::new(url.clone())
+  let rpc = async |url: String| {
+    SimpleRequestTransport::new(url.clone())
       .await
-      .unwrap_or_else(|_| panic!("couldn't create SimpleRequestRpc connected to {url}"))
+      .unwrap_or_else(|_| panic!("couldn't create SimpleRequestTransport connected to {url}"))
   };
   let main_rpc = rpc(nodes[0].clone()).await;
   let mut rpcs = vec![];
@@ -256,15 +256,16 @@ async fn main() {
 
   let mut rpc_i = 0;
   let mut handles: Vec<JoinHandle<()>> = vec![];
-  let mut height = 0;
+  let mut latest_block_number = 0;
   loop {
-    let new_height = main_rpc.get_height().await.expect("couldn't call get_height");
-    if new_height == height {
+    let new_latest_block_number =
+      main_rpc.latest_block_number().await.expect("couldn't call get_latest_block_number");
+    if new_latest_block_number == latest_block_number {
       break;
     }
-    height = new_height;
+    latest_block_number = new_latest_block_number;
 
-    while block_i < height {
+    while block_i <= latest_block_number {
       if handles.len() >= async_parallelism {
         // Guarantee one handle is complete
         handles.swap_remove(0).await.unwrap();

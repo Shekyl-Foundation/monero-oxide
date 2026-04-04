@@ -24,7 +24,10 @@ use generalized_bulletproofs_ec_gadgets::*;
 pub use fcmps;
 use fcmps::*;
 
-use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V, HELIOS_HASH_INIT, SELENE_HASH_INIT};
+use monero_ed25519::CompressedPoint;
+use monero_fcmp_plus_plus_generators::{
+  FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V, HELIOS_HASH_INIT, SELENE_HASH_INIT,
+};
 
 /// The Spend-Authorization and Linkability proof.
 pub mod sal;
@@ -68,6 +71,9 @@ impl FcmpCurves for Curves {
 
 include!(concat!(env!("OUT_DIR"), "/generators.rs"));
 
+pub(crate) static T: LazyLock<EdwardsPoint> =
+  LazyLock::new(|| EdwardsPoint(CompressedPoint::T.decompress().unwrap().into()));
+
 /// The parameters for an FCMP.
 // TODO: Don't expose this directly
 pub static FCMP_PARAMS: LazyLock<FcmpParams<Curves>> = LazyLock::new(|| {
@@ -79,9 +85,9 @@ pub static FCMP_PARAMS: LazyLock<FcmpParams<Curves>> = LazyLock::new(|| {
     *HELIOS_HASH_INIT,
     // G, T, U, V
     <Ed25519 as Ciphersuite>::generator(),
-    EdwardsPoint(*T),
-    EdwardsPoint(*FCMP_PLUS_PLUS_U),
-    EdwardsPoint(*FCMP_PLUS_PLUS_V),
+    *T,
+    EdwardsPoint((*FCMP_PLUS_PLUS_U).into()),
+    EdwardsPoint((*FCMP_PLUS_PLUS_V).into()),
   )
 });
 

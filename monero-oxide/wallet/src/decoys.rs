@@ -1,48 +1,49 @@
-use std_shims::{io, vec::Vec, string::ToString, collections::HashSet};
+#![expect(clippy::as_conversions, clippy::float_arithmetic)]
+
+use std_shims::{prelude::*, io, vec::Vec, collections::HashSet};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use rand_core::{RngCore, CryptoRng};
-use rand_distr::{Distribution, Gamma};
+use rand_distr::{Distribution as _, Gamma};
 #[cfg(not(feature = "std"))]
 use rand_distr::num_traits::Float;
 
-use curve25519_dalek::{Scalar, EdwardsPoint};
-
 use crate::{
   DEFAULT_LOCK_WINDOW, COINBASE_LOCK_WINDOW, BLOCK_TIME,
-  primitives::{Commitment, Decoys},
-  rpc::{RpcError, DecoyRpc},
+  ed25519::{Scalar, Point, Commitment},
+  ringct::clsag::Decoys,
+  interface::{InterfaceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
   output::OutputData,
   WalletOutput,
 };
 
 const RECENT_WINDOW: u64 = 15;
 const BLOCKS_PER_YEAR: usize = (365 * 24 * 60 * 60) / BLOCK_TIME;
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::cast_precision_loss)]
 const TIP_APPLICATION: f64 = (DEFAULT_LOCK_WINDOW * BLOCK_TIME) as f64;
 
 async fn select_n(
   rng: &mut (impl RngCore + CryptoRng),
-  rpc: &impl DecoyRpc,
-  height: usize,
+  rpc: &impl ProvidesDecoys,
+  block_number: usize,
   output_being_spent: &WalletOutput,
   ring_len: u8,
   fingerprintable_deterministic: bool,
-) -> Result<Vec<(u64, [EdwardsPoint; 2])>, RpcError> {
-  if height < DEFAULT_LOCK_WINDOW {
-    Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
+) -> Result<Vec<(u64, [Point; 2])>, TransactionsError> {
+  if block_number <= DEFAULT_LOCK_WINDOW {
+    Err(InterfaceError::InternalError("not enough blocks to select decoys".to_owned()))?;
   }
-  if height > rpc.get_output_distribution_end_height().await? {
-    Err(RpcError::InternalError(
-      "decoys being requested from blocks this node doesn't have".to_string(),
+  if block_number > rpc.latest_block_number().await? {
+    Err(InterfaceError::InternalError(
+      "decoys being requested from blocks this node doesn't have".to_owned(),
     ))?;
   }
 
   // Get the distribution
-  let distribution = rpc.get_output_distribution(.. height).await?;
+  let distribution = rpc.ringct_output_distribution(..= block_number).await?;
   if distribution.len() < DEFAULT_LOCK_WINDOW {
-    Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
+    Err(InterfaceError::InternalError("not enough blocks to select decoys".to_owned()))?;
   }
   let highest_output_exclusive_bound = distribution[distribution.len() - DEFAULT_LOCK_WINDOW];
   // This assumes that each miner TX had one output (as sane) and checks we have sufficient
@@ -52,11 +53,11 @@ async fn select_n(
     u64::try_from(COINBASE_LOCK_WINDOW).expect("coinbase lock window exceeds 2^{64}"),
   ) < u64::from(ring_len)
   {
-    Err(RpcError::InternalError("not enough decoy candidates".to_string()))?;
+    Err(InterfaceError::InternalError("not enough decoy candidates".to_owned()))?;
   }
 
   // Determine the outputs per second
-  #[allow(clippy::cast_precision_loss)]
+  #[expect(clippy::cast_precision_loss)]
   let per_second = {
     let blocks = distribution.len().min(BLOCKS_PER_YEAR);
     let initial = distribution[distribution.len().saturating_sub(blocks + 1)];
@@ -82,12 +83,15 @@ async fn select_n(
   while res.len() != decoy_count {
     {
       iters += 1;
-      #[cfg(not(test))]
-      const MAX_ITERS: usize = 10;
-      // When testing on fresh chains, increased iterations can be useful and we don't necessitate
-      // reasonable performance
-      #[cfg(test)]
-      const MAX_ITERS: usize = 100;
+      const MAX_ITERS: usize = {
+        #[cfg_attr(test, expect(unused))]
+        let max_iters = 10;
+        // When testing on fresh chains, increased iterations can be useful and we don't
+        // necessitate reasonable performance
+        #[cfg(test)]
+        let max_iters = 1000;
+        max_iters
+      };
       // Ensure this isn't infinitely looping
       // We check both that we aren't at the maximum amount of iterations and that the not-yet
       // selected candidates exceed the amount of candidates necessary to trigger the next iteration
@@ -97,7 +101,7 @@ async fn select_n(
             .expect("amount of ignored decoys exceeds 2^{64}")) <
           u64::from(ring_len))
       {
-        Err(RpcError::InternalError("hit decoy selection round limit".to_string()))?;
+        Err(InterfaceError::InternalError("hit decoy selection round limit".to_owned()))?;
       }
     }
 
@@ -111,7 +115,7 @@ async fn select_n(
         .expect("constant Gamma distribution could no longer be created")
         .sample(rng)
         .exp();
-      #[allow(clippy::cast_precision_loss)]
+      #[expect(clippy::cast_precision_loss)]
       if age > TIP_APPLICATION {
         age -= TIP_APPLICATION;
       } else {
@@ -121,14 +125,14 @@ async fn select_n(
           as f64;
       }
 
-      #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+      #[expect(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
       let o = (age * per_second) as u64;
       if o < highest_output_exclusive_bound {
         // Find which block this points to
         let i = distribution.partition_point(|s| *s < (highest_output_exclusive_bound - 1 - o));
         let prev = i.saturating_sub(1);
         let n = distribution[i].checked_sub(distribution[prev]).ok_or_else(|| {
-          RpcError::InternalError("RPC returned non-monotonic distribution".to_string())
+          InterfaceError::InternalError("RPC returned non-monotonic distribution".to_owned())
         })?;
         if n != 0 {
           // Select an output from within this block
@@ -146,23 +150,26 @@ async fn select_n(
     // If this is the first time we're requesting these outputs, include the real one as well
     // Prevents the node we're connected to from having a list of known decoys and then seeing a
     // TX which uses all of them, with one additional output (the true spend)
-    let real_index = if first_iter {
+    let real_index = first_iter.then(|| {
       first_iter = false;
 
       candidates.push(output_being_spent_index);
       // Sort candidates so the real spends aren't the ones at the end
-      candidates.sort();
-      Some(
-        candidates
-          .binary_search(&output_being_spent_index)
-          .expect("selected a ring which didn't include the real spend"),
-      )
-    } else {
-      None
-    };
+      candidates.sort_unstable();
+      candidates
+        .binary_search(&output_being_spent_index)
+        .expect("selected a ring which didn't include the real spend")
+    });
 
     for (i, output) in rpc
-      .get_unlocked_outputs(&candidates, height, fingerprintable_deterministic)
+      .unlocked_ringct_outputs(
+        &candidates,
+        if fingerprintable_deterministic {
+          EvaluateUnlocked::FingerprintableDeterministic { block_number }
+        } else {
+          EvaluateUnlocked::Normal
+        },
+      )
       .await?
       .iter_mut()
       .enumerate()
@@ -170,11 +177,11 @@ async fn select_n(
       // https://github.com/monero-oxide/monero-oxide/issues/56
       if real_index == Some(i) {
         if (Some(output_being_spent.key()) != output.map(|[key, _commitment]| key)) ||
-          (Some(output_being_spent.commitment().calculate()) !=
+          (Some(output_being_spent.commitment().commit()) !=
             output.map(|[_key, commitment]| commitment))
         {
-          Err(RpcError::InvalidNode(
-            "node presented different view of output we're trying to spend".to_string(),
+          Err(InterfaceError::InvalidInterface(
+            "node presented different view of output we're trying to spend".to_owned(),
           ))?;
         }
 
@@ -183,12 +190,22 @@ async fn select_n(
 
       // If this is an unlocked output, push it to the result
       if let Some(output) = output.take() {
-        // Unless torsion is present
-        // https://github.com/monero-project/monero/blob/893916ad091a92e765ce3241b94e706ad012b62a
-        //   /src/wallet/wallet2.cpp#L9050-L9060
         {
           let [key, commitment] = output;
-          if !(key.is_torsion_free() && commitment.is_torsion_free()) {
+          // Unless torsion is present
+          // https://github.com/monero-project/monero/blob/893916ad091a92e765ce3241b94e706ad012b62a
+          //   /src/wallet/wallet2.cpp#L9050-L9060
+          if !(key.into().is_torsion_free() && commitment.into().is_torsion_free()) {
+            continue;
+          }
+          /*
+            Or the key is the identity, and accordingly cannot be signed for as a real ring member.
+
+            If Monero omits this check, then transactions may technically be fingerprinted as from
+            `wallet2` (and not `monero-wallet`). We accept this (arguable) fingerprint.
+          */
+          use curve25519_dalek::traits::IsIdentity as _;
+          if key.into().is_identity() {
             continue;
           }
         }
@@ -202,32 +219,33 @@ async fn select_n(
 
 async fn select_decoys<R: RngCore + CryptoRng>(
   rng: &mut R,
-  rpc: &impl DecoyRpc,
+  rpc: &impl ProvidesDecoys,
   ring_len: u8,
-  height: usize,
+  block_number: usize,
   input: &WalletOutput,
   fingerprintable_deterministic: bool,
-) -> Result<Decoys, RpcError> {
+) -> Result<Decoys, TransactionsError> {
   if ring_len == 0 {
-    Err(RpcError::InternalError("requesting a ring of length 0".to_string()))?;
+    Err(InterfaceError::InternalError("requesting a ring of length 0".to_owned()))?;
   }
 
   // Select all decoys for this transaction, assuming we generate a sane transaction
   // We should almost never naturally generate an insane transaction, hence why this doesn't
   // bother with an overage
-  let decoys = select_n(rng, rpc, height, input, ring_len, fingerprintable_deterministic).await?;
+  let decoys =
+    select_n(rng, rpc, block_number, input, ring_len, fingerprintable_deterministic).await?;
 
   // Form the complete ring
   let mut ring = decoys;
-  ring.push((input.relative_id.index_on_blockchain, [input.key(), input.commitment().calculate()]));
+  ring.push((input.relative_id.index_on_blockchain, [input.key(), input.commitment().commit()]));
   ring.sort_by(|a, b| a.0.cmp(&b.0));
 
   /*
     Monero does have sanity checks which it applies to the selected ring.
 
     They're statistically unlikely to be hit and only occur when the transaction is published over
-    the RPC (so they are not a relay rule). The RPC allows disabling them, which monero-rpc does to
-    ensure they don't pose a problem.
+    the RPC (so they are not a relay rule). The RPC allows disabling them, which our RPC
+    implementations do to ensure they don't pose a problem.
 
     They aren't worth the complexity to implement here, especially since they're non-deterministic.
   */
@@ -254,11 +272,20 @@ async fn select_decoys<R: RngCore + CryptoRng>(
 }
 
 /// An output with decoys selected.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+///
+/// The `Debug` implementation may reveal every value within its memory.
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct OutputWithDecoys {
   output: OutputData,
   decoys: Decoys,
 }
+
+impl PartialEq for OutputWithDecoys {
+  fn eq(&self, other: &Self) -> bool {
+    bool::from(self.output.ct_eq(&other.output) & self.decoys.ct_eq(&other.decoys))
+  }
+}
+impl Eq for OutputWithDecoys {}
 
 impl OutputWithDecoys {
   /// Select decoys for this output.
@@ -270,12 +297,12 @@ impl OutputWithDecoys {
   /// only connect to trusted RPCs.
   pub async fn new(
     rng: &mut (impl Send + Sync + RngCore + CryptoRng),
-    rpc: &impl DecoyRpc,
+    rpc: &impl ProvidesDecoys,
     ring_len: u8,
-    height: usize,
+    block_number: usize,
     output: WalletOutput,
-  ) -> Result<OutputWithDecoys, RpcError> {
-    let decoys = select_decoys(rng, rpc, ring_len, height, &output, false).await?;
+  ) -> Result<OutputWithDecoys, TransactionsError> {
+    let decoys = select_decoys(rng, rpc, ring_len, block_number, &output, false).await?;
     Ok(OutputWithDecoys { output: output.data.clone(), decoys })
   }
 
@@ -295,17 +322,17 @@ impl OutputWithDecoys {
   /// only connect to trusted RPCs.
   pub async fn fingerprintable_deterministic_new(
     rng: &mut (impl Send + Sync + RngCore + CryptoRng),
-    rpc: &impl DecoyRpc,
+    rpc: &impl ProvidesDecoys,
     ring_len: u8,
-    height: usize,
+    block_number: usize,
     output: WalletOutput,
-  ) -> Result<OutputWithDecoys, RpcError> {
-    let decoys = select_decoys(rng, rpc, ring_len, height, &output, true).await?;
+  ) -> Result<OutputWithDecoys, TransactionsError> {
+    let decoys = select_decoys(rng, rpc, ring_len, block_number, &output, true).await?;
     Ok(OutputWithDecoys { output: output.data.clone(), decoys })
   }
 
   /// The key this output may be spent by.
-  pub fn key(&self) -> EdwardsPoint {
+  pub fn key(&self) -> Point {
     self.output.key()
   }
 
@@ -328,7 +355,7 @@ impl OutputWithDecoys {
   /// Write the OutputWithDecoys.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn write<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
     self.output.write(w)?;
     self.decoys.write(w)
@@ -337,7 +364,7 @@ impl OutputWithDecoys {
   /// Serialize the OutputWithDecoys to a `Vec<u8>`.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn serialize(&self) -> Vec<u8> {
     let mut serialized = Vec::with_capacity(128);
     self.write(&mut serialized).expect("write failed but <Vec as io::Write> doesn't fail");
@@ -347,7 +374,7 @@ impl OutputWithDecoys {
   /// Read an OutputWithDecoys.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn read<R: io::Read>(r: &mut R) -> io::Result<Self> {
     Ok(Self { output: OutputData::read(r)?, decoys: Decoys::read(r)? })
   }

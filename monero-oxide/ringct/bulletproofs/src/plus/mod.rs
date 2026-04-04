@@ -1,12 +1,12 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case, clippy::many_single_char_names)]
 
 use std_shims::sync::LazyLock;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, scalar::Scalar, edwards::EdwardsPoint};
+use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, Scalar, EdwardsPoint};
 
-use monero_generators::{H, BulletproofGenerators};
+use monero_bulletproofs_generators::Generators;
 
-pub(crate) use crate::{scalar_vector::ScalarVector, point_vector::PointVector};
+pub(crate) use crate::{scalar_vector::ScalarVector, point_vector::PointVector, MONERO_H};
 
 pub(crate) mod transcript;
 pub(crate) mod weighted_inner_product;
@@ -48,7 +48,7 @@ impl BpPlusGenerators {
   }
 
   pub(crate) fn g() -> EdwardsPoint {
-    *H
+    *MONERO_H
   }
 
   pub(crate) fn h() -> EdwardsPoint {

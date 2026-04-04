@@ -11,10 +11,10 @@ use ciphersuite::{
 use helioselene::{Selene, Helios};
 use ec_divisors::{DivisorCurve, ScalarDecomposition};
 
-use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
+use monero_fcmp_plus_plus_generators::{FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
 
 use crate::{
-  SELENE_FCMP_GENERATORS, HELIOS_FCMP_GENERATORS, SELENE_HASH_INIT, FCMP_PARAMS, Output,
+  T, SELENE_FCMP_GENERATORS, HELIOS_FCMP_GENERATORS, SELENE_HASH_INIT, FCMP_PARAMS, Output,
   fcmps::{TreeRoot, Path, Branches, OBlind, IBlind, IBlindBlind, CBlind, OutputBlinds, Fcmp},
   sal::*,
   FcmpPlusPlus,
@@ -25,7 +25,7 @@ fn test() {
   let x = Scalar::random(&mut OsRng);
   let y = Scalar::random(&mut OsRng);
 
-  let O = (EdwardsPoint::generator() * x) + (EdwardsPoint(*T) * y);
+  let O = (EdwardsPoint::generator() * x) + (*T * y);
   let I = EdwardsPoint::random(&mut OsRng);
   let C = EdwardsPoint::random(&mut OsRng);
 
@@ -69,19 +69,13 @@ fn test() {
     let branches = Branches::new(vec![path]).unwrap();
 
     let output_blinds = OutputBlinds::new(
-      OBlind::new(
-        EdwardsPoint(*T),
-        ScalarDecomposition::new(rerandomized_output.o_blind()).unwrap(),
-      ),
+      OBlind::new(*T, ScalarDecomposition::new(rerandomized_output.o_blind()).unwrap()),
       IBlind::new(
-        EdwardsPoint(*FCMP_PLUS_PLUS_U),
-        EdwardsPoint(*FCMP_PLUS_PLUS_V),
+        EdwardsPoint((*FCMP_PLUS_PLUS_U).into()),
+        EdwardsPoint((*FCMP_PLUS_PLUS_V).into()),
         ScalarDecomposition::new(rerandomized_output.i_blind()).unwrap(),
       ),
-      IBlindBlind::new(
-        EdwardsPoint(*T),
-        ScalarDecomposition::new(rerandomized_output.i_blind_blind()).unwrap(),
-      ),
+      IBlindBlind::new(*T, ScalarDecomposition::new(rerandomized_output.i_blind_blind()).unwrap()),
       CBlind::new(
         EdwardsPoint::generator(),
         ScalarDecomposition::new(rerandomized_output.c_blind()).unwrap(),

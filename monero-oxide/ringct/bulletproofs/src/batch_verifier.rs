@@ -2,14 +2,14 @@ use std_shims::vec::Vec;
 
 use curve25519_dalek::{
   constants::ED25519_BASEPOINT_POINT,
-  traits::{IsIdentity, VartimeMultiscalarMul},
+  traits::{IsIdentity as _, VartimeMultiscalarMul as _},
   scalar::Scalar,
   edwards::EdwardsPoint,
 };
 
-use monero_generators::{H as MONERO_H, BulletproofGenerators};
+use monero_bulletproofs_generators::Generators;
 
-use crate::{original, plus};
+use crate::{MONERO_H, original, plus};
 
 #[derive(Default)]
 pub(crate) struct InternalBatchVerifier {
@@ -22,7 +22,7 @@ pub(crate) struct InternalBatchVerifier {
 
 impl InternalBatchVerifier {
   #[must_use]
-  fn verify(self, G: EdwardsPoint, H: EdwardsPoint, generators: &BulletproofGenerators) -> bool {
+  fn verify(self, G: EdwardsPoint, H: EdwardsPoint, generators: &Generators) -> bool {
     /*
       Technically, this following line can overflow, and joining these `Vec`s _may_ panic if
       they're individually acceptable lengths yet their sum isn't. This is so negligible, due to

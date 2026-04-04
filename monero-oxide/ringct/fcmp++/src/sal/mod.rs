@@ -14,9 +14,9 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
+use monero_fcmp_plus_plus_generators::{FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
 
-use crate::{Input, Output};
+use crate::{T, Input, Output};
 
 /// A multisignature algorithm for a secret-shared `x`, not supporting outgoing view keys and as
 /// historically generated.
@@ -50,9 +50,9 @@ impl RerandomizedOutput {
     let r_r_i = <Ed25519 as Ciphersuite>::F::random(&mut *rng);
     let r_c = <Ed25519 as Ciphersuite>::F::random(&mut *rng);
 
-    let O_tilde = output.O() + (EdwardsPoint(*T) * r_o);
-    let I_tilde = output.I() + (EdwardsPoint(*FCMP_PLUS_PLUS_U) * r_i);
-    let R = (EdwardsPoint(*FCMP_PLUS_PLUS_V) * r_i) + (EdwardsPoint(*T) * r_r_i);
+    let O_tilde = output.O() + (*T * r_o);
+    let I_tilde = output.I() + (EdwardsPoint((*FCMP_PLUS_PLUS_U).into()) * r_i);
+    let R = (EdwardsPoint((*FCMP_PLUS_PLUS_V).into()) * r_i) + (*T * r_r_i);
     let C_tilde = output.C() + (<Ed25519 as Ciphersuite>::generator() * r_c);
 
     RerandomizedOutput { input: Input { O_tilde, I_tilde, R, C_tilde }, r_o, r_i, r_r_i, r_c }
@@ -135,7 +135,7 @@ impl OpenedInputTuple {
   ) -> Option<OpenedInputTuple> {
     // Verify the opening is consistent.
     let mut y_tilde = rerandomized_output.r_o + y;
-    if (<Ed25519 as Ciphersuite>::generator() * x) + (EdwardsPoint(*T) * y_tilde) !=
+    if (<Ed25519 as Ciphersuite>::generator() * x) + (*T * y_tilde) !=
       rerandomized_output.input.O_tilde
     {
       y_tilde.zeroize();
@@ -204,9 +204,9 @@ impl SpendAuthAndLinkability {
     opening: &OpenedInputTuple,
   ) -> (<Ed25519 as Ciphersuite>::G, SpendAuthAndLinkability) {
     let G = <Ed25519 as Ciphersuite>::G::generator();
-    let T_ = EdwardsPoint(*T);
-    let U = EdwardsPoint(*FCMP_PLUS_PLUS_U);
-    let V = EdwardsPoint(*FCMP_PLUS_PLUS_V);
+    let T_ = *T;
+    let U = EdwardsPoint((*FCMP_PLUS_PLUS_U).into());
+    let V = EdwardsPoint((*FCMP_PLUS_PLUS_V).into());
 
     let L = (opening.input.I_tilde * opening.x) - (U * (opening.r_i * opening.x));
 
@@ -267,9 +267,9 @@ impl SpendAuthAndLinkability {
     L: <Ed25519 as Ciphersuite>::G,
   ) {
     let G = <Ed25519 as Ciphersuite>::G::generator();
-    let T_ = EdwardsPoint(*T);
-    let U = EdwardsPoint(*FCMP_PLUS_PLUS_U);
-    let V = EdwardsPoint(*FCMP_PLUS_PLUS_V);
+    let T_ = *T;
+    let U = EdwardsPoint((*FCMP_PLUS_PLUS_U).into());
+    let V = EdwardsPoint((*FCMP_PLUS_PLUS_V).into());
 
     let e = Self::challenge(
       signable_tx_hash,

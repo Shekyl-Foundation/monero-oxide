@@ -4,9 +4,7 @@ use multiexp::BatchVerifier;
 use ciphersuite::group::Group;
 use dalek_ff_group::{Scalar, EdwardsPoint};
 
-use monero_generators::T;
-
-use crate::{Output, sal::*};
+use crate::{T, Output, sal::*};
 
 #[cfg(feature = "multisig")]
 mod legacy_multisig;
@@ -18,7 +16,7 @@ fn test_sal() {
   let x = Scalar::random(&mut OsRng);
   let y = Scalar::random(&mut OsRng);
 
-  let O = (EdwardsPoint::generator() * x) + (EdwardsPoint(*T) * y);
+  let O = (EdwardsPoint::generator() * x) + (*T * y);
   let I = EdwardsPoint::random(&mut OsRng);
   let C = EdwardsPoint::random(&mut OsRng);
 

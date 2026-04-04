@@ -1,18 +1,19 @@
-use core::ops::Deref;
+use core::ops::Deref as _;
 use std_shims::{
   sync::{Arc, Mutex},
   io::{self, Read, Write},
   collections::HashMap,
 };
 
-use rand_core::{RngCore, CryptoRng, SeedableRng};
+use rand_core::{RngCore, CryptoRng, SeedableRng as _};
 use rand_chacha::ChaCha20Rng;
 
-use zeroize::{Zeroize, Zeroizing};
+use subtle::{ConstantTimeEq as _, ConditionallySelectable as _};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use curve25519_dalek::{scalar::Scalar, edwards::EdwardsPoint};
 
-use group::{ff::PrimeField, Group, GroupEncoding};
+use group::{ff::PrimeField as _, Group as _, GroupEncoding as _};
 
 use transcript::{Transcript, RecommendedTranscript};
 use dalek_ff_group as dfg;
@@ -22,10 +23,9 @@ use frost::{
   algorithm::{WriteAddendum, Algorithm},
 };
 
-use monero_generators::biased_hash_to_point;
-use monero_io::CompressedPoint;
+use monero_ed25519::{Point, CompressedPoint};
 
-use crate::{ClsagContext, Clsag};
+use crate::{MAX_RING_SIZE, ClsagContext, Clsag};
 
 impl ClsagContext {
   fn transcript<T: Transcript>(&self, transcript: &mut T) {
@@ -42,7 +42,7 @@ impl ClsagContext {
       transcript.append_message(b"member", [u8::try_from(i).expect("ring size exceeded 255")]);
       // This also transcripts the key image generator since it's derived from this key
       transcript.append_message(b"key", pair[0].compress().to_bytes());
-      transcript.append_message(b"commitment", pair[1].compress().to_bytes())
+      transcript.append_message(b"commitment", pair[1].compress().to_bytes());
     }
 
     // Doesn't include the commitment's parts as the above ring + index includes the commitment
@@ -75,9 +75,19 @@ impl ClsagMultisigMaskSender {
 }
 impl ClsagMultisigMaskReceiver {
   fn recv(self) -> Option<Scalar> {
-    *self.buf.lock()
+    let mut lock = self.buf.lock();
+    // This is safe as this method may only be called once
+    let res = lock.take();
+    (*lock).zeroize();
+    res
   }
 }
+impl Drop for ClsagMultisigMaskReceiver {
+  fn drop(&mut self) {
+    (*self.buf.lock()).zeroize();
+  }
+}
+impl ZeroizeOnDrop for ClsagMultisigMaskReceiver {}
 
 /// Addendum produced during the signing process.
 #[derive(Clone, PartialEq, Eq, Zeroize, Debug)]
@@ -98,7 +108,7 @@ impl WriteAddendum for ClsagAddendum {
   }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize)]
 struct Interim {
   p: Scalar,
   c: Scalar,
@@ -116,15 +126,24 @@ struct Interim {
 ///
 /// The message signed is expected to be a 32-byte value. Per Monero, it's the keccak256 hash of
 /// the transaction data which is signed. This will panic if the message is not a 32-byte value.
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct ClsagMultisig {
   transcript: RecommendedTranscript,
 
   key_image_generator: EdwardsPoint,
+  /*
+    This is fine to skip, even if not preferable. These are sent over the wire during signing and
+    accordingly reasonably public. Anyone who observes them could reconstruct the key image and see
+    the set who signed, but that's it.
+  */
+  #[zeroize(skip)]
   key_image_shares: HashMap<[u8; 32], dfg::EdwardsPoint>,
   image: dfg::EdwardsPoint,
 
   context: ClsagContext,
 
+  // `ClsagMultisigMaskReceiver` implements `Zeroize` within its `Drop` implementation
+  #[zeroize(skip)]
   mask_recv: Option<ClsagMultisigMaskReceiver>,
   mask: Option<Scalar>,
 
@@ -143,9 +162,10 @@ impl ClsagMultisig {
       ClsagMultisig {
         transcript,
 
-        key_image_generator: biased_hash_to_point(
-          context.decoys.signer_ring_members()[0].compress().0,
-        ),
+        key_image_generator: Point::biased_hash(
+          context.decoys.signer_ring_members()[0].compress().to_bytes(),
+        )
+        .into(),
         key_image_shares: HashMap::new(),
         image: dfg::EdwardsPoint::identity(),
 
@@ -210,6 +230,11 @@ impl Algorithm<Ed25519> for ClsagMultisig {
     l: Participant,
     addendum: ClsagAddendum,
   ) -> Result<(), FrostError> {
+    if bool::from(!view.group_key().0.ct_eq(&self.context.decoys.signer_ring_members()[0].into())) {
+      Err(FrostError::InternalError("CLSAG is being signed with a distinct key than intended"))?;
+    }
+
+    let mut offset = Scalar::ZERO;
     if let Some(mask_recv) = self.mask_recv.take() {
       self.transcript.domain_separate(b"CLSAG");
       // Transcript the ring
@@ -223,6 +248,9 @@ impl Algorithm<Ed25519> for ClsagMultisig {
       self.mask = Some(mask);
       // Transcript the mask
       self.transcript.append_message(b"mask", mask.to_bytes());
+
+      // Set the offset applied to the first participant
+      offset = view.offset();
     }
 
     // Transcript this participant's contribution
@@ -232,10 +260,12 @@ impl Algorithm<Ed25519> for ClsagMultisig {
       .append_message(b"key_image_share", addendum.key_image_share.compress().to_bytes());
 
     // Accumulate the interpolated share
-    let interpolated_key_image_share = addendum.key_image_share *
+    let interpolated_key_image_share = ((addendum.key_image_share *
       view
         .interpolation_factor(l)
-        .ok_or(FrostError::InternalError("processing addendum for non-participant"))?;
+        .ok_or(FrostError::InternalError("processing addendum for non-participant"))?) *
+      view.scalar()) +
+      dfg::EdwardsPoint(self.key_image_generator * offset);
     self.image += interpolated_key_image_share;
 
     self
@@ -256,9 +286,6 @@ impl Algorithm<Ed25519> for ClsagMultisig {
     nonces: Vec<Zeroizing<dfg::Scalar>>,
     msg_hash: &[u8],
   ) -> dfg::Scalar {
-    self.image =
-      (self.image * view.scalar()) + (dfg::EdwardsPoint(self.key_image_generator) * view.offset());
-
     // Use the transcript to get a seeded random number generator
     //
     // The transcript contains private data, preventing passive adversaries from recreating this
@@ -299,9 +326,18 @@ impl Algorithm<Ed25519> for ClsagMultisig {
   ) -> Option<Self::Signature> {
     let interim = self.interim.as_ref().expect("verify called before sign_share");
     let mut clsag = interim.clsag.clone();
-    // We produced shares as `r - p x`, yet the signature is actually `r - p x - c x`
-    // Substract `c x` (saved as `c`) now
-    clsag.s[usize::from(self.context.decoys.signer_index())] = sum - interim.c;
+    {
+      // We produced shares as `r - p x`, yet the signature is actually `r - p x - c x`
+      // Substract `c x` (saved as `c`) now
+      let signer_s = monero_ed25519::Scalar::from(sum - interim.c);
+      for s_index in 0 ..= MAX_RING_SIZE {
+        if usize::from(s_index) == clsag.s.len() {
+          break;
+        }
+        let signer_index = s_index.ct_eq(&self.context.decoys.signer_index());
+        clsag.s[usize::from(s_index)].conditional_assign(&signer_s, signer_index);
+      }
+    }
     if clsag
       .verify(
         self
@@ -309,10 +345,10 @@ impl Algorithm<Ed25519> for ClsagMultisig {
           .decoys
           .ring()
           .iter()
-          .map(|m| [CompressedPoint::from(m[0].compress()), CompressedPoint::from(m[1].compress())])
+          .map(|m| [m[0].compress(), m[1].compress()])
           .collect::<Vec<_>>(),
-        &CompressedPoint::from(self.image.0.compress()),
-        &CompressedPoint::from(interim.pseudo_out.compress()),
+        &CompressedPoint::from(self.image.0.compress().to_bytes()),
+        &CompressedPoint::from(interim.pseudo_out.compress().to_bytes()),
         self.msg_hash.as_ref().expect("verify called before sign_share"),
       )
       .is_ok()
