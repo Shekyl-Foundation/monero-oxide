@@ -11,3 +11,11 @@ please see the [audit](/audits/generalized-bulletproofs) and read the message
 for the monero-oxide Git repository's commit
 124ee09ba9d31b54b6fe4ff15d531a399bc18c99
 (`git show 124ee09ba9d31b54b6fe4ff15d531a399bc18c99`).
+
+### 'Fixed'
+
+[This repository](https://github.com/cypherstack/generalized-bulletproofs-fix)
+contains notes on a flaw within the Generalized Bulletproofs protocol,
+modifying the indexes in response. This library adopts the changes to indexing
+as described in that paper. These changes occured after the aforementioned
+audit.

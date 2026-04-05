@@ -353,8 +353,8 @@ where
     // polynomial).
 
     // ni = n'
-    let ni = 2 + (2 * (c / 2));
-    // These indexes are from the Generalized Bulletproofs paper
+    let ni = 2 + (2 * c);
+    // These indexes are from the Generalized Bulletproofs (fixed) paper
     #[rustfmt::skip]
     let ilr = ni / 2; // 1 if c = 0
     #[rustfmt::skip]
@@ -362,11 +362,11 @@ where
     #[rustfmt::skip]
     let is = ni + 1; // 3 if c = 0
     #[rustfmt::skip]
-    let jlr = ni / 2; // 1 if c = 0
+    let jlr = ilr; // 1 if c = 0
     #[rustfmt::skip]
     let jo = 0; // 0 if c = 0
     #[rustfmt::skip]
-    let js = ni + 1; // 3 if c = 0
+    let js = is; // 3 if c = 0
 
     // If c = 0, these indexes perfectly align with the stated powers of X from the Bulletproofs
     // paper for the following coefficients
@@ -458,7 +458,7 @@ where
       coefficients of `r` decreasing from `ni` (skipping `jlr`).
     */
 
-    for (mut i, c) in witness.c.iter().enumerate() {
+    for (i, c) in witness.c.iter().enumerate() {
       let cg_weights = {
         let mut cg = ScalarVector::new(n);
         let mut cg_hi = 0;
@@ -471,15 +471,11 @@ where
         cg
       };
 
-      // Modify `i` from the index of the vector commitment to its index within `l`
-      if i >= ilr {
-        i += 1;
-      }
-      // Because `i` has skipped `ilr`, `j` will inherently skip `jlr`
+      let i = 1 + i;
       let j = ni - i;
 
-      l[i] = ScalarVector::from(c.g_values.clone());
-      r[j] = cg_weights;
+      l[j] = ScalarVector::from(c.g_values.clone());
+      r[i] = cg_weights;
     }
 
     // Multiply `l` and `r` to obtain `t`
@@ -554,12 +550,9 @@ where
       let mut u = (alpha * x[ilr]) + (beta * x[io]) + (rho * x[is]);
 
       // Incorporate the commitment masks multiplied by the associated power of `x`
-      for (mut i, commitment) in witness.c.iter().enumerate() {
-        // If this index is `ni / 2`, skip it
-        if i >= (ni / 2) {
-          i += 1;
-        }
-        u += x[i] * commitment.mask;
+      for (i, commitment) in witness.c.iter().enumerate() {
+        let i = 1 + i;
+        u += x[ni - i] * commitment.mask;
       }
       u
     };
@@ -631,12 +624,12 @@ where
     let n = self.n();
     let c = self.c();
 
-    let ni = 2 + (2 * (c / 2));
+    let ni = 2 + (2 * c);
 
     let ilr = ni / 2;
     let io = ni;
     let is = ni + 1;
-    let jlr = ni / 2;
+    let jlr = ilr;
     let jo = 0;
 
     let l_r_poly_len = 1 + ni + 1;
@@ -743,16 +736,12 @@ where
         // Push the terms for `C`, which increment from `0`, and the terms for `WC`, which
         // decrement from `n'`
         {
-          let mut i = i;
           let C = self.C.0[i];
           let WCG = cg;
-
-          if i >= (ni / 2) {
-            i += 1;
-          }
+          let i = 1 + i;
           let j = ni - i;
-          verifier.additional.push((x[i], C));
-          h_bold_scalars = h_bold_scalars + &(WCG * x[j]);
+          verifier.additional.push((x[j], C));
+          h_bold_scalars = h_bold_scalars + &(WCG * x[i]);
         }
       }
 
