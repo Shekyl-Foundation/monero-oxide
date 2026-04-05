@@ -1,0 +1,22 @@
+---
+description: Security and quantum resistance priorities for the Shekyl project
+alwaysApply: true
+---
+
+# Privacy and Security
+
+Security and quantum resistance take priority over privacy. Privacy is critical but secondary to security.
+
+## Hierarchy
+
+1. **Quantum resistance** -- all cryptographic choices must consider quantum threat models. Prefer NIST PQC finalized standards (ML-DSA, ML-KEM, SLH-DSA).
+2. **Classical security** -- maintain defense-in-depth with hybrid schemes (classical + post-quantum) during transition periods.
+3. **Privacy** -- preserve Monero-grade privacy (stealth addresses, RingCT, confidential transactions) wherever it does not conflict with points 1 and 2.
+
+## Rules
+
+- Never introduce a cryptographic primitive without evaluating its quantum security level.
+- Prefer hybrid constructions (e.g., Ed25519 + ML-DSA) over pure classical or pure PQ schemes during the transition.
+- Key material must never be logged, serialized to plaintext, or exposed in error messages.
+- All randomness must come from cryptographically secure sources (`OsRng` in Rust, `/dev/urandom` or equivalent in C++).
+- Side-channel resistance (constant-time operations) is mandatory for all crypto code paths.

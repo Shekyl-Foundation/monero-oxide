@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
+#![deny(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use std_shims::vec::Vec;
@@ -12,7 +13,7 @@ use curve25519_dalek::{Scalar, EdwardsPoint};
 use monero_oxide::{
   io::write_varint,
   primitives::{Commitment, keccak256, keccak256_to_scalar},
-  ringct::EncryptedAmount,
+  fcmp::EncryptedAmount,
   transaction::Input,
 };
 
@@ -137,27 +138,9 @@ impl SharedKeyDerivations {
   }
 
   fn decrypt(&self, enc_amount: &EncryptedAmount) -> Commitment {
-    match enc_amount {
-      EncryptedAmount::Original { mask, amount } => {
-        let mask_shared_sec_scalar = keccak256_to_scalar(self.shared_key.as_bytes());
-        let amount_shared_sec_scalar = keccak256_to_scalar(mask_shared_sec_scalar.as_bytes());
-
-        let mask = Scalar::from_bytes_mod_order(*mask) - mask_shared_sec_scalar;
-        let amount_scalar = Scalar::from_bytes_mod_order(*amount) - amount_shared_sec_scalar;
-
-        // d2b from rctTypes.cpp
-        let amount = u64::from_le_bytes(
-          amount_scalar.to_bytes()[.. 8]
-            .try_into()
-            .expect("32-byte array couldn't have an 8-byte slice taken"),
-        );
-
-        Commitment::new(mask, amount)
-      }
-      EncryptedAmount::Compact { amount } => Commitment::new(
-        self.commitment_mask(),
-        u64::from_le_bytes(self.compact_amount_encryption(u64::from_le_bytes(*amount))),
-      ),
-    }
+    Commitment::new(
+      self.commitment_mask(),
+      u64::from_le_bytes(self.compact_amount_encryption(u64::from_le_bytes(enc_amount.amount))),
+    )
   }
 }

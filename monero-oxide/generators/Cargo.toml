@@ -1,10 +1,10 @@
 [package]
 name = "monero-generators"
 version = "0.4.0"
-description = "Monero's hash to point function and generators"
+description = "Shekyl's hash to point function and generators"
 license = "MIT"
-repository = "https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/generators"
-authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+repository = "https://github.com/Shekyl-Foundation/monero-oxide/tree/main/monero-oxide/generators"
+authors = ["Luke Parker <lukeparker5132@gmail.com>", "Shekyl Foundation <dev@shekyl.org>"]
 edition = "2021"
 rust-version = "1.66"
 

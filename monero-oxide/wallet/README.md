@@ -44,8 +44,13 @@ It also won't act as a wallet, just as a wallet-functionality library.
 attempting to use two inputs to create transactions. These are considered out
 of scope to `monero-wallet`.
 
-Finally, this library only supports producing transactions with CLSAG
-signatures. That means this library cannot spend non-RingCT outputs.
+This library accepts FCMP++ as the sole transaction proof type (with weight
+estimation and transaction construction). **FCMP++ signing is not yet
+implemented** -- calling `sign()` with `ProofType::FcmpPlusPlusPqc` will
+return `SendError::FcmpSigningNotImplemented`. The FCMP++ signing flow
+requires curve tree proof generation and PQC auth signatures.
+
+This library cannot spend v1 (CryptoNote) outputs.
 
 ### Cargo Features
 

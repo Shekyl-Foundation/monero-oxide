@@ -1,19 +1,16 @@
 [package]
 name = "monero-wallet"
 version = "0.1.0"
-description = "Wallet functionality for the Monero protocol, built around monero-oxide"
+description = "Wallet functionality for the Shekyl protocol, built around monero-oxide"
 license = "MIT"
-repository = "https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/wallet"
-authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+repository = "https://github.com/Shekyl-Foundation/monero-oxide/tree/main/monero-oxide/wallet"
+authors = ["Luke Parker <lukeparker5132@gmail.com>", "Shekyl Foundation <dev@shekyl.org>"]
 edition = "2021"
 rust-version = "1.89"
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
-
-[package.metadata.cargo-machete]
-ignored = ["monero-clsag"]
 
 [lints]
 workspace = true
@@ -40,7 +37,6 @@ frost = { package = "modular-frost", version = "0.11", default-features = false,
 
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 
-monero-clsag = { path = "../ringct/clsag", default-features = false }
 monero-oxide = { path = "..", default-features = false }
 monero-rpc = { path = "../rpc", default-features = false }
 monero-address = { path = "./address", default-features = false }
@@ -68,11 +64,10 @@ std = [
   "rand_chacha/std",
   "rand_distr/std",
 
-  "monero-clsag/std",
   "monero-oxide/std",
   "monero-rpc/std",
   "monero-address/std",
 ]
 compile-time-generators = ["curve25519-dalek/precomputed-tables", "monero-oxide/compile-time-generators"]
-multisig = ["std", "transcript", "frost", "monero-clsag/multisig"]
+multisig = ["std", "transcript", "frost"]
 default = ["std", "compile-time-generators"]

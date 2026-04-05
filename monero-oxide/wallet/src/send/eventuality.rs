@@ -5,7 +5,7 @@ use zeroize::Zeroize;
 use monero_oxide::io::CompressedPoint;
 
 use crate::{
-  ringct::PrunedRctProofs,
+  fcmp::PrunedProofs,
   transaction::{Input, Timelock, Pruned, Transaction},
   send::SignableTransaction,
 };
@@ -100,7 +100,7 @@ impl Eventuality {
 
     // Check the encrypted amounts and commitments
     let commitments_and_encrypted_amounts = self.0.commitments_and_encrypted_amounts(&key_images);
-    let Transaction::V2 { proofs: Some(PrunedRctProofs { ref base, .. }), .. } = tx else {
+    let Transaction::V2 { proofs: Some(PrunedProofs { ref base, .. }), .. } = tx else {
       return false;
     };
     if base.commitments !=

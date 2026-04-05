@@ -2,17 +2,13 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use curve25519_dalek::scalar::Scalar;
-
 use serde::Deserialize;
 use serde_json::json;
 
 use monero_oxide::{
-  primitives::Commitment,
-  ringct::{RctPrunable, bulletproofs::BatchVerifier},
-  transaction::{Input, Transaction},
+  fcmp::bulletproofs::BatchVerifier,
+  transaction::Transaction,
   block::Block,
-  io::CompressedPoint,
 };
 
 use monero_rpc::{RpcError, Rpc};
@@ -32,7 +28,6 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
     }
   };
 
-  // TODO: Grab the JSON to also check it was deserialized correctly
   #[derive(Deserialize, Debug)]
   struct BlockResponse {
     blob: String,
@@ -57,7 +52,6 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
   let txs_len = 1 + block.transactions.len();
 
   if !block.transactions.is_empty() {
-    // Test getting pruned transactions
     loop {
       match rpc.get_pruned_transactions(&block.transactions).await {
         Ok(_) => break,
@@ -82,132 +76,20 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
 
     let mut batch = BatchVerifier::new();
     for tx in txs {
-      match tx {
-        Transaction::V1 { prefix: _, signatures } => {
-          assert!(!signatures.is_empty());
-          continue;
-        }
-        Transaction::V2 { prefix: _, proofs: None } => {
-          panic!("proofs were empty in non-miner v2 transaction");
-        }
-        Transaction::V2 { ref prefix, proofs: Some(ref proofs) } => {
-          let sig_hash = tx.signature_hash().expect("no signature hash for TX with proofs");
-          // Verify all proofs we support proving for
-          // This is due to having debug_asserts calling verify within their proving, and CLSAG
-          // multisig explicitly calling verify as part of its signing process
-          // Accordingly, making sure our signature_hash algorithm is correct is great, and further
-          // making sure the verification functions are valid is appreciated
-          match &proofs.prunable {
-            RctPrunable::AggregateMlsagBorromean { .. } | RctPrunable::MlsagBorromean { .. } => {}
-            RctPrunable::MlsagBulletproofs { bulletproof, .. } |
-            RctPrunable::MlsagBulletproofsCompactAmount { bulletproof, .. } => {
-              assert!(bulletproof.batch_verify(
-                &mut rand_core::OsRng,
-                &mut batch,
-                &proofs.base.commitments
-              ));
-            }
-            RctPrunable::Clsag { bulletproof, clsags, pseudo_outs } => {
-              assert!(bulletproof.batch_verify(
-                &mut rand_core::OsRng,
-                &mut batch,
-                &proofs.base.commitments
-              ));
-
-              for (i, clsag) in clsags.iter().enumerate() {
-                let (amount, key_offsets, image) = match &prefix.inputs[i] {
-                  Input::Gen(_) => panic!("Input::Gen"),
-                  Input::ToKey { amount, key_offsets, key_image } => {
-                    (amount, key_offsets, key_image)
-                  }
-                };
-
-                let mut running_sum = 0;
-                let mut actual_indexes = vec![];
-                for offset in key_offsets {
-                  running_sum += offset;
-                  actual_indexes.push(running_sum);
-                }
-
-                async fn get_outs(
-                  rpc: &impl Rpc,
-                  amount: u64,
-                  indexes: &[u64],
-                ) -> Vec<[CompressedPoint; 2]> {
-                  #[derive(Deserialize, Debug)]
-                  struct Out {
-                    key: String,
-                    mask: String,
-                  }
-
-                  #[derive(Deserialize, Debug)]
-                  struct Outs {
-                    outs: Vec<Out>,
-                  }
-
-                  let outs: Outs = loop {
-                    match rpc
-                      .rpc_call(
-                        "get_outs",
-                        Some(json!({
-                          "get_txid": true,
-                          "outputs": indexes.iter().map(|o| json!({
-                            "amount": amount,
-                            "index": o
-                          })).collect::<Vec<_>>()
-                        })),
-                      )
-                      .await
-                    {
-                      Ok(outs) => break outs,
-                      Err(RpcError::ConnectionError(e)) => {
-                        println!("get_outs ConnectionError: {e}");
-                        continue;
-                      }
-                      Err(e) => panic!("couldn't connect to RPC to get outs: {e:?}"),
-                    }
-                  };
-
-                  let rpc_point = |point: &str| {
-                    CompressedPoint(
-                      hex::decode(point)
-                        .expect("invalid hex for ring member")
-                        .try_into()
-                        .expect("invalid point len for ring member"),
-                    )
-                  };
-
-                  outs
-                    .outs
-                    .iter()
-                    .map(|out| {
-                      let mask = rpc_point(&out.mask);
-                      if amount != 0 {
-                        assert_eq!(
-                          mask,
-                          CompressedPoint::from(
-                            Commitment::new(Scalar::from(1u8), amount).calculate().compress()
-                          )
-                        );
-                      }
-                      [rpc_point(&out.key), mask]
-                    })
-                    .collect()
-                }
-
-                clsag
-                  .verify(
-                    get_outs(&rpc, amount.unwrap_or(0), &actual_indexes).await,
-                    image,
-                    &pseudo_outs[i],
-                    &sig_hash,
-                  )
-                  .unwrap();
-              }
-            }
-          }
-        }
-      }
+      let Transaction::V2 { ref prefix, proofs: Some(ref proofs) } = tx else {
+        panic!("non-v2 or proofless non-miner TX in block {block_i}");
+      };
+      let _sig_hash = tx.signature_hash().expect("no signature hash for TX with proofs");
+      assert!(
+        proofs.prunable.bulletproof.batch_verify(
+          &mut rand_core::OsRng,
+          &mut batch,
+          &proofs.base.commitments,
+        ),
+        "BP+ verification failed for TX in block {block_i} ({} inputs, {} outputs)",
+        prefix.inputs.len(),
+        prefix.outputs.len(),
+      );
     }
     assert!(batch.verify());
   }
@@ -219,18 +101,14 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
 async fn main() {
   let args = std::env::args().collect::<Vec<String>>();
 
-  // Read start block as the first arg
   let mut block_i =
     args.get(1).expect("no start block specified").parse::<usize>().expect("invalid start block");
 
-  // How many blocks to work on at once
   let async_parallelism: usize =
     args.get(2).unwrap_or(&"8".to_string()).parse::<usize>().expect("invalid parallelism argument");
 
-  // Read further args as RPC URLs
   let default_nodes = vec![
-    "http://xmr-node-uk.cakewallet.com:18081".to_string(),
-    "http://xmr-node-eu.cakewallet.com:18081".to_string(),
+    "http://shekyl:oxide@127.0.0.1:18081".to_string(),
   ];
   let mut specified_nodes = vec![];
   {
@@ -266,10 +144,8 @@ async fn main() {
 
     while block_i < height {
       if handles.len() >= async_parallelism {
-        // Guarantee one handle is complete
         handles.swap_remove(0).await.unwrap();
 
-        // Remove all of the finished handles
         let mut i = 0;
         while i < handles.len() {
           if handles[i].is_finished() {

@@ -1,11 +1,11 @@
 name: test-dependencies
-description: Installs test dependencies for monero-oxide
+description: Installs test dependencies for monero-oxide (Shekyl fork)
 
 inputs:
-  monero-version:
-    description: "Monero version to download and run as a regtest node"
+  shekyl-version:
+    description: "Shekyl daemon version to use for integration tests"
     required: false
-    default: v0.18.3.4
+    default: latest
 
 runs:
   using: "composite"
@@ -13,10 +13,10 @@ runs:
     - name: Install Build Dependencies
       uses: ./.github/actions/build-dependencies
 
-    - name: Run a Monero Regtest Node
+    - name: Run a Shekyl Regtest Node
       uses: ./.github/actions/monero
       with:
-        version: ${{ inputs.monero-version }}
+        version: ${{ inputs.shekyl-version }}
 
     - name: Run a Monero Wallet-RPC
       uses: ./.github/actions/monero-wallet-rpc

@@ -8,13 +8,10 @@ use zeroize::Zeroize;
 use crate::{
   io::*,
   primitives::keccak256,
-  ring_signatures::RingSignature,
-  ringct::{bulletproofs::Bulletproof, PrunedRctProofs},
+  fcmp::{bulletproofs::Bulletproof, PrunedProofs},
 };
 
 /// The maximum size for a non-miner transaction.
-// https://github.com/monero-project/monero
-//   /blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/src/cryptonote_config.h#L41
 pub const MAX_NON_MINER_TRANSACTION_SIZE: usize = 1_000_000;
 
 const MAX_MINER_TRANSACTION_INPUTS: usize = 1;
@@ -31,11 +28,7 @@ const fn const_max(a: usize, b: usize) -> usize {
   }
 }
 
-/// An upper bound for the amount of inputs within a Monero transaction.
-///
-/// This is not guaranteed to be the maximum amount of inputs within a Monero transaction. It is a
-/// value greater than or equal to the maximum amount of inputs allowed within a Monero
-/// transaction.
+/// An upper bound for the amount of inputs within a transaction.
 pub const INPUTS_UPPER_BOUND: usize =
   const_max(MAX_MINER_TRANSACTION_INPUTS, NON_MINER_TRANSACTION_INPUTS_UPPER_BOUND);
 
@@ -43,7 +36,7 @@ const NON_MINER_TRANSACTION_OUTPUT_SIZE_LOWER_BOUND: usize = 32;
 const MAX_NON_MINER_TRANSACTION_OUTPUTS: usize =
   MAX_NON_MINER_TRANSACTION_SIZE / NON_MINER_TRANSACTION_OUTPUT_SIZE_LOWER_BOUND;
 
-/// An input in the Monero protocol.
+/// An input in the Shekyl protocol.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Input {
   /// An input for a miner transaction, which is generating new coins.
@@ -52,9 +45,9 @@ pub enum Input {
   ToKey {
     /// The pool this input spends an output of.
     amount: Option<u64>,
-    /// The decoys used by this input's ring, specified as their offset distance from each other.
+    /// Offset list (empty for FCMP++, which proves against the full UTXO set).
     key_offsets: Vec<u64>,
-    /// The key image (linking tag, nullifer) for the spent output.
+    /// The key image (linking tag, nullifier) for the spent output.
     key_image: CompressedPoint,
   },
 }
@@ -67,7 +60,6 @@ impl Input {
         w.write_all(&[255])?;
         write_varint(height, w)
       }
-
       Input::ToKey { amount, key_offsets, key_image } => {
         w.write_all(&[2])?;
         write_varint(&amount.unwrap_or(0), w)?;
@@ -90,15 +82,9 @@ impl Input {
       255 => Input::Gen(read_varint(r)?),
       2 => {
         let amount = read_varint(r)?;
-        // https://github.com/monero-project/monero/
-        //   blob/00fd416a99686f0956361d1cd0337fe56e58d4a7/
-        //   src/cryptonote_basic/cryptonote_format_utils.cpp#L860-L863
-        // A non-RCT 0-amount input can't exist because only RCT TXs can have a 0-amount output
-        // That's why collapsing to None if the amount is 0 is safe, even without knowing if RCT
         let amount = if amount == 0 { None } else { Some(amount) };
         Input::ToKey {
           amount,
-          // Each offset takes at least one byte, and this won't be in a miner transaction
           key_offsets: read_vec(read_varint, Some(MAX_NON_MINER_TRANSACTION_SIZE), r)?,
           key_image: CompressedPoint::read(r)?,
         }
@@ -108,7 +94,7 @@ impl Input {
   }
 }
 
-/// An output in the Monero protocol.
+/// An output in the Shekyl protocol.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Output {
   /// The pool this output should be sorted into.
@@ -143,7 +129,7 @@ impl Output {
     let amount = read_varint(r)?;
     let amount = if rct {
       if amount != 0 {
-        Err(io::Error::other("RCT TX output wasn't 0"))?;
+        Err(io::Error::other("confidential TX output amount wasn't 0"))?;
       }
       None
     } else {
@@ -164,9 +150,9 @@ impl Output {
   }
 }
 
-/// An additional timelock for a Monero transaction.
+/// An additional timelock for a transaction.
 ///
-/// Monero outputs are locked by a default timelock. If a timelock is explicitly specified, the
+/// Outputs are locked by a default timelock. If a timelock is explicitly specified, the
 /// longer of the two will be the timelock used.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
 pub enum Timelock {
@@ -230,30 +216,20 @@ impl PartialOrd for Timelock {
 
 /// The transaction prefix.
 ///
-/// This is common to all transaction versions and contains most parts of the transaction needed to
-/// handle it. It excludes any proofs.
+/// Contains most parts of the transaction needed to handle it. Excludes proofs.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TransactionPrefix {
   /// The timelock this transaction is additionally constrained by.
-  ///
-  /// All transactions on the blockchain are subject to a 10-block lock. This adds a further
-  /// constraint.
   pub additional_timelock: Timelock,
   /// The inputs for this transaction.
   pub inputs: Vec<Input>,
   /// The outputs for this transaction.
   pub outputs: Vec<Output>,
-  /// The additional data included within the transaction.
-  ///
-  /// This is an arbitrary data field, yet is used by wallets for containing the data necessary to
-  /// scan the transaction.
+  /// The additional data included within the transaction (used by wallets for scanning data).
   pub extra: Vec<u8>,
 }
 
 impl TransactionPrefix {
-  /// Write a TransactionPrefix.
-  ///
-  /// This is distinct from Monero in that it won't write any version.
   fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
     self.additional_timelock.write(w)?;
     write_vec(Input::write, &self.inputs, w)?;
@@ -263,14 +239,7 @@ impl TransactionPrefix {
   }
 
   /// Read a TransactionPrefix.
-  ///
-  /// This is distinct from Monero in that it won't read the version. The version must be passed
-  /// in.
-  ///
-  /// This MAY error if miscellaneous Monero conseusus rules are broken, as useful when
-  /// deserializing. The result is not guaranteed to follow all Monero consensus rules or any
-  /// specific set of consensus rules.
-  pub fn read<R: Read>(r: &mut R, version: u64) -> io::Result<TransactionPrefix> {
+  pub fn read<R: Read>(r: &mut R) -> io::Result<TransactionPrefix> {
     let additional_timelock = Timelock::read(r)?;
 
     let inputs = read_vec(|r| Input::read(r), Some(INPUTS_UPPER_BOUND), r)?;
@@ -283,7 +252,7 @@ impl TransactionPrefix {
     let mut prefix = TransactionPrefix {
       additional_timelock,
       inputs,
-      outputs: read_vec(|r| Output::read((!is_miner_tx) && (version == 2), r), max_outputs, r)?,
+      outputs: read_vec(|r| Output::read(!is_miner_tx, r), max_outputs, r)?,
       extra: vec![],
     };
     let max_extra = if is_miner_tx { None } else { Some(MAX_NON_MINER_TRANSACTION_SIZE) };
@@ -291,103 +260,40 @@ impl TransactionPrefix {
     Ok(prefix)
   }
 
-  fn hash(&self, version: u64) -> [u8; 32] {
+  fn hash(&self) -> [u8; 32] {
     let mut buf = vec![];
-    write_varint(&version, &mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
+    write_varint(&2u8, &mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
     self.write(&mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
     keccak256(buf)
   }
 }
 
-#[allow(private_bounds)]
+#[allow(private_bounds, private_interfaces)]
 mod sealed {
   use core::fmt::Debug;
-  use crate::ringct::*;
+  use crate::fcmp::*;
   use super::*;
 
-  pub(crate) trait PotentiallyPrunedRingSignatures:
-    Clone + PartialEq + Eq + Default + Debug
-  {
-    fn signatures_to_write(&self) -> &[RingSignature];
-    fn read_signatures(inputs: &[Input], r: &mut impl Read) -> io::Result<Self>;
-  }
-
-  impl PotentiallyPrunedRingSignatures for Vec<RingSignature> {
-    fn signatures_to_write(&self) -> &[RingSignature] {
-      self
-    }
-    fn read_signatures(inputs: &[Input], r: &mut impl Read) -> io::Result<Self> {
-      let mut signatures = Vec::with_capacity(inputs.len());
-      for input in inputs {
-        match input {
-          Input::ToKey { key_offsets, .. } => {
-            signatures.push(RingSignature::read(key_offsets.len(), r)?)
-          }
-          _ => Err(io::Error::other("reading signatures for a transaction with non-ToKey inputs"))?,
-        }
-      }
-      Ok(signatures)
-    }
-  }
-
-  impl PotentiallyPrunedRingSignatures for () {
-    fn signatures_to_write(&self) -> &[RingSignature] {
-      &[]
-    }
-    fn read_signatures(_: &[Input], _: &mut impl Read) -> io::Result<Self> {
-      Ok(())
-    }
-  }
-
-  pub(crate) trait PotentiallyPrunedRctProofs: Clone + PartialEq + Eq + Debug {
+  pub(crate) trait PotentiallyPrunedProofs: Clone + PartialEq + Eq + Debug {
     fn write(&self, w: &mut impl Write) -> io::Result<()>;
-    fn read(
-      ring_length: usize,
-      inputs: usize,
-      outputs: usize,
-      r: &mut impl Read,
-    ) -> io::Result<Option<Self>>;
-    fn rct_type(&self) -> RctType;
-    fn base(&self) -> &RctBase;
+    fn read(inputs: usize, outputs: usize, r: &mut impl Read) -> io::Result<Option<Self>>;
   }
 
-  impl PotentiallyPrunedRctProofs for RctProofs {
+  impl PotentiallyPrunedProofs for Proofs {
     fn write(&self, w: &mut impl Write) -> io::Result<()> {
       self.write(w)
     }
-    fn read(
-      ring_length: usize,
-      inputs: usize,
-      outputs: usize,
-      r: &mut impl Read,
-    ) -> io::Result<Option<Self>> {
-      RctProofs::read(ring_length, inputs, outputs, r)
-    }
-    fn rct_type(&self) -> RctType {
-      self.rct_type()
-    }
-    fn base(&self) -> &RctBase {
-      &self.base
+    fn read(inputs: usize, outputs: usize, r: &mut impl Read) -> io::Result<Option<Self>> {
+      Proofs::read(inputs, outputs, r)
     }
   }
 
-  impl PotentiallyPrunedRctProofs for PrunedRctProofs {
+  impl PotentiallyPrunedProofs for PrunedProofs {
     fn write(&self, w: &mut impl Write) -> io::Result<()> {
-      self.base.write(w, self.rct_type)
+      self.base.write(w, crate::fcmp::ProofType::FcmpPlusPlusPqc)
     }
-    fn read(
-      _ring_length: usize,
-      inputs: usize,
-      outputs: usize,
-      r: &mut impl Read,
-    ) -> io::Result<Option<Self>> {
-      Ok(RctBase::read(inputs, outputs, r)?.map(|(rct_type, base)| Self { rct_type, base }))
-    }
-    fn rct_type(&self) -> RctType {
-      self.rct_type
-    }
-    fn base(&self) -> &RctBase {
-      &self.base
+    fn read(_inputs: usize, outputs: usize, r: &mut impl Read) -> io::Result<Option<Self>> {
+      Ok(ProofBase::read(outputs, r)?.map(|(_proof_type, base)| Self { base }))
     }
   }
 
@@ -395,99 +301,71 @@ mod sealed {
 
   /// A trait representing either pruned or not pruned proofs.
   pub trait PotentiallyPruned: Sealed {
-    /// Potentially-pruned ring signatures.
-    type RingSignatures: PotentiallyPrunedRingSignatures;
-    /// Potentially-pruned RingCT proofs.
-    type RctProofs: PotentiallyPrunedRctProofs;
+    /// Potentially-pruned proofs.
+    type Proofs: PotentiallyPrunedProofs;
   }
   /// A marker for an object which isn't pruned.
   #[derive(Clone, PartialEq, Eq, Debug)]
   pub struct NotPruned;
   impl Sealed for NotPruned {}
   impl PotentiallyPruned for NotPruned {
-    type RingSignatures = Vec<RingSignature>;
-    type RctProofs = RctProofs;
+    type Proofs = Proofs;
   }
   /// A marker for an object which is pruned.
   #[derive(Clone, PartialEq, Eq, Debug)]
   pub struct Pruned;
   impl Sealed for Pruned {}
   impl PotentiallyPruned for Pruned {
-    type RingSignatures = ();
-    type RctProofs = PrunedRctProofs;
+    type Proofs = PrunedProofs;
   }
 }
 pub use sealed::*;
 
-/// A Monero transaction.
+/// A Shekyl transaction (always version 2).
+///
+/// Shekyl does not support v1 (CryptoNote) transactions. All transactions use v2
+/// with FCMP++ proofs.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Transaction<P: PotentiallyPruned = NotPruned> {
-  /// A version 1 transaction, used by the original Cryptonote codebase.
-  V1 {
-    /// The transaction's prefix.
-    prefix: TransactionPrefix,
-    /// The transaction's ring signatures.
-    signatures: P::RingSignatures,
-  },
-  /// A version 2 transaction, used by the RingCT protocol.
+  /// A version 2 transaction with FCMP++ proofs (or coinbase with no proofs).
   V2 {
     /// The transaction's prefix.
     prefix: TransactionPrefix,
-    /// The transaction's proofs.
-    proofs: Option<P::RctProofs>,
+    /// The transaction's proofs (None for coinbase).
+    proofs: Option<P::Proofs>,
   },
-}
-
-enum PrunableHash<'a> {
-  V1(&'a [RingSignature]),
-  V2([u8; 32]),
 }
 
 #[allow(private_bounds)]
 impl<P: PotentiallyPruned> Transaction<P> {
-  /// Get the version of this transaction.
+  /// Get the version of this transaction (always 2).
   pub fn version(&self) -> u8 {
-    match self {
-      Transaction::V1 { .. } => 1,
-      Transaction::V2 { .. } => 2,
-    }
+    2
   }
 
   /// Get the TransactionPrefix of this transaction.
   pub fn prefix(&self) -> &TransactionPrefix {
     match self {
-      Transaction::V1 { prefix, .. } | Transaction::V2 { prefix, .. } => prefix,
+      Transaction::V2 { prefix, .. } => prefix,
     }
   }
 
   /// Get a mutable reference to the TransactionPrefix of this transaction.
   pub fn prefix_mut(&mut self) -> &mut TransactionPrefix {
     match self {
-      Transaction::V1 { prefix, .. } | Transaction::V2 { prefix, .. } => prefix,
+      Transaction::V2 { prefix, .. } => prefix,
     }
   }
 
   /// Write the Transaction.
-  ///
-  /// Some writable transactions may not be readable if they're malformed, per Monero's consensus
-  /// rules.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
-    write_varint(&self.version(), w)?;
-    match self {
-      Transaction::V1 { prefix, signatures } => {
-        prefix.write(w)?;
-        for ring_sig in signatures.signatures_to_write() {
-          ring_sig.write(w)?;
-        }
-      }
-      Transaction::V2 { prefix, proofs } => {
-        prefix.write(w)?;
-        match proofs {
-          None => w.write_all(&[0])?,
-          Some(proofs) => proofs.write(w)?,
-        }
-      }
+    write_varint(&2u8, w)?;
+    let Transaction::V2 { prefix, proofs } = self;
+    prefix.write(w)?;
+    match proofs {
+      None => w.write_all(&[0])?,
+      Some(proofs) => proofs.write(w)?,
     }
     Ok(())
   }
@@ -500,184 +378,92 @@ impl<P: PotentiallyPruned> Transaction<P> {
   }
 
   /// Read a Transaction.
-  ///
-  /// This MAY error if miscellaneous Monero conseusus rules are broken, as useful when
-  /// deserializing. The result is not guaranteed to follow all Monero consensus rules or any
-  /// specific set of consensus rules.
   pub fn read<R: Read>(r: &mut R) -> io::Result<Self> {
-    let version = read_varint(r)?;
-    let prefix = TransactionPrefix::read(r, version)?;
-
-    if version == 1 {
-      let signatures = if (prefix.inputs.len() == 1) && matches!(prefix.inputs[0], Input::Gen(_)) {
-        Default::default()
-      } else {
-        P::RingSignatures::read_signatures(&prefix.inputs, r)?
-      };
-
-      Ok(Transaction::V1 { prefix, signatures })
-    } else if version == 2 {
-      let proofs = P::RctProofs::read(
-        prefix.inputs.first().map_or(0, |input| match input {
-          Input::Gen(_) => 0,
-          Input::ToKey { key_offsets, .. } => key_offsets.len(),
-        }),
-        prefix.inputs.len(),
-        prefix.outputs.len(),
-        r,
-      )?;
-
-      Ok(Transaction::V2 { prefix, proofs })
-    } else {
-      Err(io::Error::other("tried to deserialize unknown version"))
+    let version: u64 = read_varint(r)?;
+    if version != 2 {
+      Err(io::Error::other("only v2 transactions are supported by Shekyl"))?;
     }
-  }
+    let prefix = TransactionPrefix::read(r)?;
 
-  // The hash of the transaction.
-  #[allow(clippy::needless_pass_by_value)]
-  fn hash_with_prunable_hash(&self, prunable: PrunableHash<'_>) -> [u8; 32] {
-    match self {
-      Transaction::V1 { prefix, .. } => {
-        let mut buf = Vec::with_capacity(512);
-
-        // We don't use `self.write` as that may write the signatures (if this isn't pruned)
-        write_varint(&self.version(), &mut buf)
-          .expect("write failed but <Vec as io::Write> doesn't fail");
-        prefix.write(&mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
-
-        // We explicitly write the signatures ourselves here
-        let PrunableHash::V1(signatures) = prunable else {
-          panic!("hashing v1 TX with non-v1 prunable data")
-        };
-        for signature in signatures {
-          signature.write(&mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
-        }
-
-        keccak256(buf)
-      }
-      Transaction::V2 { prefix, proofs } => {
-        let mut hashes = Vec::with_capacity(96);
-
-        hashes.extend(prefix.hash(2));
-
-        if let Some(proofs) = proofs {
-          let mut buf = Vec::with_capacity(512);
-          proofs
-            .base()
-            .write(&mut buf, proofs.rct_type())
-            .expect("write failed but <Vec as io::Write> doesn't fail");
-          hashes.extend(keccak256(&buf));
-        } else {
-          // Serialization of RctBase::Null
-          hashes.extend(keccak256([0]));
-        }
-        let PrunableHash::V2(prunable_hash) = prunable else {
-          panic!("hashing v2 TX with non-v2 prunable data")
-        };
-        hashes.extend(prunable_hash);
-
-        keccak256(hashes)
-      }
-    }
+    let proofs = P::Proofs::read(prefix.inputs.len(), prefix.outputs.len(), r)?;
+    Ok(Transaction::V2 { prefix, proofs })
   }
 }
 
 impl Transaction<NotPruned> {
   /// The hash of the transaction.
   pub fn hash(&self) -> [u8; 32] {
-    match self {
-      Transaction::V1 { signatures, .. } => {
-        self.hash_with_prunable_hash(PrunableHash::V1(signatures))
-      }
-      Transaction::V2 { proofs, .. } => {
-        self.hash_with_prunable_hash(PrunableHash::V2(if let Some(proofs) = proofs {
-          let mut buf = Vec::with_capacity(1024);
-          proofs
-            .prunable
-            .write(&mut buf, proofs.rct_type())
-            .expect("write failed but <Vec as io::Write> doesn't fail");
-          keccak256(buf)
-        } else {
-          [0; 32]
-        }))
-      }
+    let Transaction::V2 { prefix, proofs } = self;
+    let mut hashes = Vec::with_capacity(96);
+
+    hashes.extend(prefix.hash());
+
+    if let Some(proofs) = proofs {
+      let mut buf = Vec::with_capacity(512);
+      proofs
+        .base
+        .write(&mut buf, proofs.proof_type())
+        .expect("write failed but <Vec as io::Write> doesn't fail");
+      hashes.extend(keccak256(&buf));
+
+      let mut prunable_buf = Vec::with_capacity(1024);
+      proofs
+        .prunable
+        .write(&mut prunable_buf)
+        .expect("write failed but <Vec as io::Write> doesn't fail");
+      hashes.extend(keccak256(prunable_buf));
+    } else {
+      hashes.extend(keccak256([0]));
+      hashes.extend([0; 32]);
     }
+
+    keccak256(hashes)
   }
 
   /// Calculate the hash of this transaction as needed for signing it.
   ///
-  /// This returns None if the transaction is without signatures.
+  /// Returns None if the transaction is a coinbase (without proofs).
   pub fn signature_hash(&self) -> Option<[u8; 32]> {
-    Some(match self {
-      Transaction::V1 { prefix, .. } => {
-        if (prefix.inputs.len() == 1) && matches!(prefix.inputs[0], Input::Gen(_)) {
-          None?;
-        }
-        self.hash_with_prunable_hash(PrunableHash::V1(&[]))
-      }
-      Transaction::V2 { proofs, .. } => self.hash_with_prunable_hash({
-        let Some(proofs) = proofs else { None? };
-        let mut buf = Vec::with_capacity(1024);
-        proofs
-          .prunable
-          .signature_write(&mut buf)
-          .expect("write failed but <Vec as io::Write> doesn't fail");
-        PrunableHash::V2(keccak256(buf))
-      }),
-    })
-  }
+    let Transaction::V2 { prefix, proofs } = self;
+    let proofs = proofs.as_ref()?;
 
-  fn is_rct_bulletproof(&self) -> bool {
-    match self {
-      Transaction::V1 { .. } => false,
-      Transaction::V2 { proofs, .. } => {
-        let Some(proofs) = proofs else { return false };
-        proofs.rct_type().bulletproof()
-      }
-    }
-  }
+    let mut hashes = Vec::with_capacity(96);
+    hashes.extend(prefix.hash());
 
-  fn is_rct_bulletproof_plus(&self) -> bool {
-    match self {
-      Transaction::V1 { .. } => false,
-      Transaction::V2 { proofs, .. } => {
-        let Some(proofs) = proofs else { return false };
-        proofs.rct_type().bulletproof_plus()
-      }
-    }
+    let mut base_buf = Vec::with_capacity(512);
+    proofs
+      .base
+      .write(&mut base_buf, proofs.proof_type())
+      .expect("write failed but <Vec as io::Write> doesn't fail");
+    hashes.extend(keccak256(&base_buf));
+
+    let mut sig_buf = Vec::with_capacity(1024);
+    proofs
+      .prunable
+      .signature_write(&mut sig_buf)
+      .expect("write failed but <Vec as io::Write> doesn't fail");
+    hashes.extend(keccak256(sig_buf));
+
+    Some(keccak256(hashes))
   }
 
   /// Calculate the transaction's weight.
   pub fn weight(&self) -> usize {
     let blob_size = self.serialize().len();
-
-    let bp = self.is_rct_bulletproof();
-    let bp_plus = self.is_rct_bulletproof_plus();
-    if !(bp || bp_plus) {
-      blob_size
-    } else {
-      blob_size +
-        Bulletproof::calculate_clawback(
-          bp_plus,
-          match self {
-            Transaction::V1 { .. } => panic!("v1 transaction was BP(+)"),
-            Transaction::V2 { prefix, .. } => prefix.outputs.len(),
-          },
-        )
-        .0
+    let Transaction::V2 { prefix, proofs } = self;
+    if proofs.is_none() {
+      return blob_size;
     }
+    blob_size + Bulletproof::calculate_clawback(true, prefix.outputs.len()).0
   }
 }
 
 impl From<Transaction<NotPruned>> for Transaction<Pruned> {
   fn from(tx: Transaction<NotPruned>) -> Transaction<Pruned> {
-    match tx {
-      Transaction::V1 { prefix, .. } => Transaction::V1 { prefix, signatures: () },
-      Transaction::V2 { prefix, proofs } => Transaction::V2 {
-        prefix,
-        proofs: proofs
-          .map(|proofs| PrunedRctProofs { rct_type: proofs.rct_type(), base: proofs.base }),
-      },
+    let Transaction::V2 { prefix, proofs } = tx;
+    Transaction::V2 {
+      prefix,
+      proofs: proofs.map(|proofs| PrunedProofs { base: proofs.base }),
     }
   }
 }

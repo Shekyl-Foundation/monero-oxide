@@ -1,7 +1,7 @@
 use zeroize::{Zeroize, Zeroizing};
 
 use monero_wallet::{
-  ringct::RctType,
+  fcmp::ProofType,
   rpc::FeeRate,
   address::MoneroAddress,
   OutputWithDecoys,
@@ -12,7 +12,7 @@ use monero_wallet::{
 /// A builder for Monero transactions.
 #[derive(Clone, PartialEq, Eq, Zeroize, Debug)]
 pub struct SignableTransactionBuilder {
-  rct_type: RctType,
+  proof_type: ProofType,
   outgoing_view_key: Zeroizing<[u8; 32]>,
   inputs: Vec<OutputWithDecoys>,
   payments: Vec<(MoneroAddress, u64)>,
@@ -23,13 +23,13 @@ pub struct SignableTransactionBuilder {
 
 impl SignableTransactionBuilder {
   pub fn new(
-    rct_type: RctType,
+    proof_type: ProofType,
     outgoing_view_key: Zeroizing<[u8; 32]>,
     change: Change,
     fee_rate: FeeRate,
   ) -> Self {
     Self {
-      rct_type,
+      proof_type,
       outgoing_view_key,
       inputs: vec![],
       payments: vec![],
@@ -70,7 +70,7 @@ impl SignableTransactionBuilder {
 
   pub fn build(self) -> Result<SignableTransaction, SendError> {
     SignableTransaction::new(
-      self.rct_type,
+      self.proof_type,
       self.outgoing_view_key,
       self.inputs,
       self.payments,

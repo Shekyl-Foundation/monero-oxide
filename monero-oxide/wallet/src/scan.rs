@@ -207,14 +207,14 @@ impl InternalScanner {
         } else {
           let Transaction::V2 { proofs: Some(ref proofs), .. } = &tx else {
             // Invalid transaction, as of consensus rules at the time of writing this code
-            Err(ScanError::InvalidScannableBlock("non-miner v2 transaction without RCT proofs"))?
+            Err(ScanError::InvalidScannableBlock("non-miner v2 transaction without proofs"))?
           };
 
           commitment = match proofs.base.encrypted_amounts.get(o) {
             Some(amount) => output_derivations.decrypt(amount),
             // Invalid transaction, as of consensus rules at the time of writing this code
             None => Err(ScanError::InvalidScannableBlock(
-              "RCT proofs without an encrypted amount per output",
+              "proofs without an encrypted amount per output",
             ))?,
           };
 
@@ -272,7 +272,8 @@ impl InternalScanner {
       return Ok(Timelocked(vec![]));
     };
 
-    if block.header.hardfork_version > 16 {
+    // Shekyl starts at HF1 with a fresh genesis; reject only pre-genesis versions
+    if block.header.hardfork_version < 1 {
       Err(ScanError::UnsupportedProtocol(block.header.hardfork_version))?;
     }
 
@@ -304,14 +305,11 @@ impl InternalScanner {
       }
     }
 
-    // If the block's version is >= 12, drop all unencrypted payment IDs
-    // https://github.com/monero-project/monero/blob/ac02af92867590ca80b2779a7bbeafa99ff94dcb/
-    //   src/wallet/wallet2.cpp#L2739-L2744
-    if block.header.hardfork_version >= 12 {
-      for output in &mut res.0 {
-        if matches!(output.metadata.payment_id, Some(PaymentId::Unencrypted(_))) {
-          output.metadata.payment_id = None;
-        }
+    // Shekyl never supports unencrypted payment IDs (Monero dropped them at HF12; Shekyl
+    // starts well past that threshold at genesis)
+    for output in &mut res.0 {
+      if matches!(output.metadata.payment_id, Some(PaymentId::Unencrypted(_))) {
+        output.metadata.payment_id = None;
       }
     }
 

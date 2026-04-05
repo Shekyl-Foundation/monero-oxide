@@ -1,10 +1,10 @@
 [package]
 name = "monero-base58"
 version = "0.1.0"
-description = "Rust implementation of Monero's base58 encoding scheme"
+description = "Rust implementation of Shekyl's base58 encoding scheme"
 license = "MIT"
-repository = "https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/wallet/base58"
-authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+repository = "https://github.com/Shekyl-Foundation/monero-oxide/tree/main/monero-oxide/wallet/base58"
+authors = ["Luke Parker <lukeparker5132@gmail.com>", "Shekyl Foundation <dev@shekyl.org>"]
 edition = "2021"
 rust-version = "1.66"
 

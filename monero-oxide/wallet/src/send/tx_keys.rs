@@ -12,7 +12,7 @@ use monero_oxide::io::CompressedPoint;
 
 use crate::{
   primitives::{keccak256, Commitment},
-  ringct::EncryptedAmount,
+  fcmp::EncryptedAmount,
   SharedKeyDerivations,
   send::{ChangeEnum, InternalPayment, SignableTransaction, key_image_sort},
 };
@@ -278,7 +278,7 @@ impl SignableTransaction {
         }
       };
       let commitment = Commitment::new(shared_key_derivations.commitment_mask(), amount);
-      let encrypted_amount = EncryptedAmount::Compact {
+      let encrypted_amount = EncryptedAmount {
         amount: shared_key_derivations.compact_amount_encryption(amount),
       };
       res.push((commitment, encrypted_amount));
@@ -286,6 +286,7 @@ impl SignableTransaction {
     res
   }
 
+  #[allow(dead_code)]
   pub(crate) fn sum_output_masks(&self, key_images: &[CompressedPoint]) -> Scalar {
     self
       .commitments_and_encrypted_amounts(key_images)

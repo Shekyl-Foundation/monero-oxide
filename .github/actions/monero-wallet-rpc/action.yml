@@ -1,49 +1,38 @@
-name: monero-wallet-rpc
-description: Spawns a Monero Wallet-RPC
+name: shekyl-wallet-rpc
+description: Spawns a Shekyl Wallet-RPC for integration tests
 
 inputs:
   version:
-    description: "Version to download and run"
+    description: "Shekyl daemon version (for wallet-rpc)"
     required: false
-    default: v0.18.3.4
+    default: latest
 
 runs:
   using: "composite"
   steps:
-    - name: Monero Wallet RPC Cache
-      id: cache-monero-wallet-rpc
+    - name: Shekyl Wallet RPC Cache
+      id: cache-shekyl-wallet-rpc
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: monero-wallet-rpc
-        key: monero-wallet-rpc-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+        path: shekyl-wallet-rpc
+        key: shekyl-wallet-rpc-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
 
-    - name: Download the Monero Wallet RPC
-      if: steps.cache-monero-wallet-rpc.outputs.cache-hit != 'true'
-      # Calculates OS/ARCH to demonstrate it, yet then locks to linux-x64 due
-      # to the contained folder not following the same naming scheme and
-      # requiring further expansion not worth doing right now
+    - name: Build Shekyl Wallet RPC
+      if: steps.cache-shekyl-wallet-rpc.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        RUNNER_OS=${{ runner.os }}
-        RUNNER_ARCH=${{ runner.arch }}
+        # Build from the same Shekyl source (already cloned by daemon step)
+        if [ -d /tmp/shekyl-build ]; then
+          cp /tmp/shekyl-build/build/release/bin/shekyl-wallet-rpc ./shekyl-wallet-rpc 2>/dev/null || \
+          cp /tmp/shekyl-build/build/release/bin/monero-wallet-rpc ./shekyl-wallet-rpc 2>/dev/null || \
+          echo "WARNING: wallet-rpc binary not found in build output"
+        fi
 
-        RUNNER_OS=${RUNNER_OS,,}
-        RUNNER_ARCH=${RUNNER_ARCH,,}
-
-        RUNNER_OS=linux
-        RUNNER_ARCH=x64
-
-        FILE=monero-$RUNNER_OS-$RUNNER_ARCH-${{ inputs.version }}.tar.bz2
-        wget https://downloads.getmonero.org/cli/$FILE
-        tar -xvf $FILE
-
-        mv monero-x86_64-linux-gnu-${{ inputs.version }}/monero-wallet-rpc monero-wallet-rpc
-
-    - name: Monero Wallet RPC
+    - name: Shekyl Wallet RPC
       shell: bash
       run: |
-        ./monero-wallet-rpc --allow-mismatched-daemon-version \
-          --daemon-address 0.0.0.0:18081 --daemon-login monero:oxide \
+        ./shekyl-wallet-rpc --allow-mismatched-daemon-version \
+          --daemon-address 0.0.0.0:18081 --daemon-login shekyl:oxide \
           --disable-rpc-login --rpc-bind-port 18082 \
           --wallet-dir ./ \
           --detach

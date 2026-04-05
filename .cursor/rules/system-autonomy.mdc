@@ -1,0 +1,18 @@
+---
+description: Self-regulating system design principles for Shekyl
+alwaysApply: true
+---
+
+# System Autonomy
+
+Design for self-regulating systems. Minimize need for manual intervention or coordinated upgrades.
+
+## Rules
+
+- Difficulty adjustment must be automatic and responsive -- no manual resets or emergency interventions.
+- Fee markets should be adaptive, adjusting to network load without governance votes or hard-coded thresholds.
+- Prefer on-chain governance mechanisms over off-chain coordination for protocol parameter changes.
+- Self-healing network: nodes should automatically recover from partitions, stale peers, and temporary failures.
+- Monitoring and health metrics should be built into the node, not bolted on as external tooling.
+- Design upgrade paths that can activate autonomously via on-chain signaling when consensus thresholds are met.
+- Every tunable parameter should have a documented rationale for its default value and bounds for safe adjustment.

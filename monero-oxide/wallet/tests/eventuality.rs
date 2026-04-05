@@ -67,7 +67,7 @@ test!(
 
       // Mutate the TX
       let Transaction::V2 { proofs: Some(ref mut proofs), .. } = tx else {
-        panic!("TX wasn't RingCT")
+        panic!("TX had no proofs")
       };
       proofs.base.commitments[0] = CompressedPoint::from(
         (proofs.base.commitments[0].decompress().unwrap() + ED25519_BASEPOINT_POINT).compress(),

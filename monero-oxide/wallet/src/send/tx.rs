@@ -1,24 +1,16 @@
 use std_shims::{vec, vec::Vec};
 
-use curve25519_dalek::{
-  constants::{ED25519_BASEPOINT_COMPRESSED, ED25519_BASEPOINT_TABLE},
-  Scalar,
-};
+use curve25519_dalek::constants::{ED25519_BASEPOINT_COMPRESSED, ED25519_BASEPOINT_TABLE};
 
 use crate::{
   io::{varint_len, write_varint, CompressedPoint},
-  primitives::Commitment,
-  ringct::{
-    clsag::Clsag, bulletproofs::Bulletproof, EncryptedAmount, RctType, RctBase, RctPrunable,
-    RctProofs,
-  },
+  fcmp::{bulletproofs::Bulletproof, EncryptedAmount, ProofBase, PrunableProof, Proofs},
   transaction::{Input, Output, Timelock, TransactionPrefix, Transaction},
   extra::{ARBITRARY_DATA_MARKER, PaymentId, Extra},
   send::{InternalPayment, SignableTransaction, SignableTransactionWithKeyImages},
 };
 
 impl SignableTransaction {
-  // Output the inputs for this transaction.
   pub(crate) fn inputs(&self, key_images: &[CompressedPoint]) -> Vec<Input> {
     debug_assert_eq!(self.inputs.len(), key_images.len());
 
@@ -33,7 +25,6 @@ impl SignableTransaction {
     res
   }
 
-  // Output the outputs for this transaction.
   pub(crate) fn outputs(&self, key_images: &[CompressedPoint]) -> Vec<Output> {
     let shared_key_derivations = self.shared_key_derivations(key_images);
     debug_assert_eq!(self.payments.len(), shared_key_derivations.len());
@@ -45,18 +36,12 @@ impl SignableTransaction {
       res.push(Output {
         key: CompressedPoint::from(key.compress()),
         amount: None,
-        view_tag: (match self.rct_type {
-          RctType::ClsagBulletproof => false,
-          RctType::ClsagBulletproofPlus => true,
-          _ => panic!("unsupported RctType"),
-        })
-        .then_some(shared_key_derivations.view_tag),
+        view_tag: Some(shared_key_derivations.view_tag),
       });
     }
     res
   }
 
-  // Calculate the TX extra for this transaction.
   pub(crate) fn extra(&self) -> Vec<u8> {
     let (tx_key, additional_keys) = self.transaction_keys_pub();
     debug_assert!(additional_keys.is_empty() || (additional_keys.len() == self.payments.len()));
@@ -77,35 +62,20 @@ impl SignableTransaction {
         .write(&mut id_vec)
         .expect("write failed but <Vec as io::Write> doesn't fail");
       extra.push_nonce(id_vec);
-    } else {
-      /*
-        If there's no payment ID, we push a dummy (as wallet2 does) to the first payment.
-
-        This does cause a random payment ID for the other recipient (a documented fingerprint).
-        Functionally, random payment IDs should be fine as wallet2 will trigger this same behavior
-        (a random payment ID being seen by the recipient) with a batch send if one of the recipient
-        addresses has a payment ID.
-
-        The alternative would be to not include any payment ID, fingerprinting to the entire
-        blockchain this is non-standard wallet software (instead of just a single recipient).
-      */
-      if self.payments.len() == 2 {
-        let (_, payment_id_xor) = self
-          .payments
-          .iter()
-          .zip(&payment_id_xors)
-          .find(|(payment, _)| matches!(payment, InternalPayment::Payment(_, _)))
-          .expect("multiple change outputs?");
-        let mut id_vec = Vec::with_capacity(1 + 8);
-        // The dummy payment ID is [0; 8], which when xor'd with the mask, is just the mask
-        PaymentId::Encrypted(*payment_id_xor)
-          .write(&mut id_vec)
-          .expect("write failed but <Vec as io::Write> doesn't fail");
-        extra.push_nonce(id_vec);
-      }
+    } else if self.payments.len() == 2 {
+      let (_, payment_id_xor) = self
+        .payments
+        .iter()
+        .zip(&payment_id_xors)
+        .find(|(payment, _)| matches!(payment, InternalPayment::Payment(_, _)))
+        .expect("multiple change outputs?");
+      let mut id_vec = Vec::with_capacity(1 + 8);
+      PaymentId::Encrypted(*payment_id_xor)
+        .write(&mut id_vec)
+        .expect("write failed but <Vec as io::Write> doesn't fail");
+      extra.push_nonce(id_vec);
     }
 
-    // Include data if present
     for part in &self.data {
       let mut arb = vec![ARBITRARY_DATA_MARKER];
       arb.extend(part);
@@ -118,40 +88,17 @@ impl SignableTransaction {
   }
 
   pub(crate) fn weight_and_necessary_fee(&self) -> (usize, u64) {
-    /*
-      This transaction is variable length to:
-        - The decoy offsets (fixed)
-        - The TX extra (variable to key images, requiring an interactive protocol)
-
-      Thankfully, the TX extra *length* is fixed. Accordingly, we can calculate the inevitable TX's
-      weight at this time with a shimmed transaction.
-    */
     let base_weight = {
       let mut key_images = Vec::with_capacity(self.inputs.len());
-      let mut clsags = Vec::with_capacity(self.inputs.len());
       let mut pseudo_outs = Vec::with_capacity(self.inputs.len());
       for _ in &self.inputs {
         key_images.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
-        clsags.push(Clsag {
-          D: CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED),
-          s: vec![
-            Scalar::ZERO;
-            match self.rct_type {
-              RctType::ClsagBulletproof => 11,
-              RctType::ClsagBulletproofPlus => 16,
-              _ => unreachable!("unsupported RCT type"),
-            }
-          ],
-          c1: Scalar::ZERO,
-        });
         pseudo_outs.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
       }
       let mut encrypted_amounts = Vec::with_capacity(self.payments.len());
-      let mut bp_commitments = Vec::with_capacity(self.payments.len());
       let mut commitments = Vec::with_capacity(self.payments.len());
       for _ in &self.payments {
-        encrypted_amounts.push(EncryptedAmount::Compact { amount: [0; 8] });
-        bp_commitments.push(Commitment::zero());
+        encrypted_amounts.push(EncryptedAmount { amount: [0; 8] });
         commitments.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
       }
 
@@ -162,63 +109,36 @@ impl SignableTransaction {
         }
         log2_find
       };
-      // This is log2 the padded amount of IPA rows
-      // We have 64 rows per commitment, so we need 64 * c IPA rows
-      // We rewrite this as 2**6 * c
-      // By finding the padded log2 of c, we get 2**6 * 2**p
-      // This declares the log2 to be 6 + p
       let lr_len = 6 + padded_log2;
 
-      let bulletproof = match self.rct_type {
-        RctType::ClsagBulletproof => {
-          let mut bp = Vec::with_capacity(((9 + (2 * lr_len)) * 32) + 2);
-          let push_point = |bp: &mut Vec<u8>| {
-            bp.push(1);
-            bp.extend([0; 31]);
-          };
-          let push_scalar = |bp: &mut Vec<u8>| bp.extend([0; 32]);
-          for _ in 0 .. 4 {
+      let bulletproof = {
+        let mut bp = Vec::with_capacity(((6 + (2 * lr_len)) * 32) + 2);
+        let push_point = |bp: &mut Vec<u8>| {
+          bp.push(1);
+          bp.extend([0; 31]);
+        };
+        let push_scalar = |bp: &mut Vec<u8>| bp.extend([0; 32]);
+        for _ in 0 .. 3 {
+          push_point(&mut bp);
+        }
+        for _ in 0 .. 3 {
+          push_scalar(&mut bp);
+        }
+        for _ in 0 .. 2 {
+          write_varint(&lr_len, &mut bp)
+            .expect("write failed but <Vec as io::Write> doesn't fail");
+          for _ in 0 .. lr_len {
             push_point(&mut bp);
           }
-          for _ in 0 .. 2 {
-            push_scalar(&mut bp);
-          }
-          for _ in 0 .. 2 {
-            write_varint(&lr_len, &mut bp)
-              .expect("write failed but <Vec as io::Write> doesn't fail");
-            for _ in 0 .. lr_len {
-              push_point(&mut bp);
-            }
-          }
-          for _ in 0 .. 3 {
-            push_scalar(&mut bp);
-          }
-          Bulletproof::read(&mut bp.as_slice()).expect("made an invalid dummy BP")
         }
-        RctType::ClsagBulletproofPlus => {
-          let mut bp = Vec::with_capacity(((6 + (2 * lr_len)) * 32) + 2);
-          let push_point = |bp: &mut Vec<u8>| {
-            bp.push(1);
-            bp.extend([0; 31]);
-          };
-          let push_scalar = |bp: &mut Vec<u8>| bp.extend([0; 32]);
-          for _ in 0 .. 3 {
-            push_point(&mut bp);
-          }
-          for _ in 0 .. 3 {
-            push_scalar(&mut bp);
-          }
-          for _ in 0 .. 2 {
-            write_varint(&lr_len, &mut bp)
-              .expect("write failed but <Vec as io::Write> doesn't fail");
-            for _ in 0 .. lr_len {
-              push_point(&mut bp);
-            }
-          }
-          Bulletproof::read_plus(&mut bp.as_slice()).expect("made an invalid dummy BP+")
-        }
-        _ => panic!("unsupported RctType"),
+        Bulletproof::read_plus(&mut bp.as_slice()).expect("made an invalid dummy BP+")
       };
+
+      // Estimated sizes for FCMP++ proof weight calculation
+      const ESTIMATED_FCMP_BASE_PROOF_BYTES: usize = 2000;
+      const ESTIMATED_FCMP_PROOF_BYTES_PER_INPUT: usize = 500;
+      const ML_DSA_65_SIGNATURE_SIZE: usize = 3309;
+      let n_inputs = self.inputs.len();
 
       // `- 1` to remove the one byte for the 0 fee
       Transaction::V2 {
@@ -228,40 +148,44 @@ impl SignableTransaction {
           outputs: self.outputs(&key_images),
           extra: self.extra(),
         },
-        proofs: Some(RctProofs {
-          base: RctBase { fee: 0, encrypted_amounts, pseudo_outs: vec![], commitments },
-          prunable: RctPrunable::Clsag { bulletproof, clsags, pseudo_outs },
+        proofs: Some(Proofs {
+          base: ProofBase { fee: 0, encrypted_amounts, commitments },
+          prunable: PrunableProof {
+            pseudo_outs,
+            bulletproof,
+            reference_block: 0,
+            fcmp_proof: vec![
+              0u8;
+              ESTIMATED_FCMP_BASE_PROOF_BYTES +
+                ESTIMATED_FCMP_PROOF_BYTES_PER_INPUT * n_inputs
+            ],
+            pqc_auths: (0 .. n_inputs)
+              .map(|_| vec![0u8; ML_DSA_65_SIGNATURE_SIZE])
+              .collect(),
+          },
         }),
       }
       .weight() -
         1
     };
 
-    // We now have the base weight, without the fee encoded
-    // The fee itself will impact the weight as its encoding is [1, 9] bytes long
     let mut possible_weights = Vec::with_capacity(9);
     for i in 1 ..= 9 {
       possible_weights.push(base_weight + i);
     }
     debug_assert_eq!(possible_weights.len(), 9);
 
-    // We now calculate the fee which would be used for each weight
     let mut possible_fees = Vec::with_capacity(9);
     for weight in possible_weights {
       possible_fees.push(self.fee_rate.calculate_fee_from_weight(weight));
     }
 
-    // We now look for the fee whose length matches the length used to derive it
     let mut weight_and_fee = None;
     for (fee_len, possible_fee) in possible_fees.into_iter().enumerate() {
       let fee_len = 1 + fee_len;
       debug_assert!(1 <= fee_len);
       debug_assert!(fee_len <= 9);
 
-      // We use the first fee whose encoded length is not larger than the length used within this
-      // weight
-      // This should be because the lengths are equal, yet means if somehow none are equal, this
-      // will still terminate successfully
       if varint_len(possible_fee) <= fee_len {
         weight_and_fee = Some((base_weight + fee_len, possible_fee));
         break;
@@ -272,6 +196,7 @@ impl SignableTransaction {
   }
 }
 
+#[allow(dead_code)]
 impl SignableTransactionWithKeyImages {
   pub(crate) fn transaction_without_signatures(&self) -> Transaction {
     let commitments_and_encrypted_amounts =
@@ -286,12 +211,30 @@ impl SignableTransactionWithKeyImages {
     }
     let bulletproof = {
       let mut bp_rng = self.intent.seeded_rng(b"bulletproof");
-      (match self.intent.rct_type {
-        RctType::ClsagBulletproof => Bulletproof::prove(&mut bp_rng, bp_commitments),
-        RctType::ClsagBulletproofPlus => Bulletproof::prove_plus(&mut bp_rng, bp_commitments),
-        _ => panic!("unsupported RctType"),
-      })
-      .expect("couldn't prove BP(+)s for this many payments despite checking in constructor?")
+      Bulletproof::prove_plus(&mut bp_rng, bp_commitments)
+        .expect("couldn't prove BP+s for this many payments despite checking in constructor?")
+    };
+
+    let fee = if self
+      .intent
+      .payments
+      .iter()
+      .any(|payment| matches!(payment, InternalPayment::Change(_)))
+    {
+      self.intent.weight_and_necessary_fee().1
+    } else {
+      let inputs =
+        self.intent.inputs.iter().map(|input| input.commitment().amount).sum::<u64>();
+      let payments = self
+        .intent
+        .payments
+        .iter()
+        .filter_map(|payment| match payment {
+          InternalPayment::Payment(_, amount) => Some(amount),
+          InternalPayment::Change(_) => None,
+        })
+        .sum::<u64>();
+      inputs - payments
     };
 
     Transaction::V2 {
@@ -301,37 +244,15 @@ impl SignableTransactionWithKeyImages {
         outputs: self.intent.outputs(&self.key_images),
         extra: self.intent.extra(),
       },
-      proofs: Some(RctProofs {
-        base: RctBase {
-          fee: if self
-            .intent
-            .payments
-            .iter()
-            .any(|payment| matches!(payment, InternalPayment::Change(_)))
-          {
-            // The necessary fee is the fee
-            self.intent.weight_and_necessary_fee().1
-          } else {
-            // If we don't have a change output, the difference is the fee
-            let inputs =
-              self.intent.inputs.iter().map(|input| input.commitment().amount).sum::<u64>();
-            let payments = self
-              .intent
-              .payments
-              .iter()
-              .filter_map(|payment| match payment {
-                InternalPayment::Payment(_, amount) => Some(amount),
-                InternalPayment::Change(_) => None,
-              })
-              .sum::<u64>();
-            // Safe since the constructor checks inputs >= (payments + fee)
-            inputs - payments
-          },
-          encrypted_amounts,
+      proofs: Some(Proofs {
+        base: ProofBase { fee, encrypted_amounts, commitments },
+        prunable: PrunableProof {
           pseudo_outs: vec![],
-          commitments,
+          bulletproof,
+          reference_block: 0,
+          fcmp_proof: vec![],
+          pqc_auths: vec![],
         },
-        prunable: RctPrunable::Clsag { bulletproof, clsags: vec![], pseudo_outs: vec![] },
       }),
     }
   }

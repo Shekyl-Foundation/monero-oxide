@@ -1,21 +1,29 @@
-# monero-oxide
+# monero-oxide (Shekyl fork)
 
-monero-oxide is an organization to maintain and develop the `monero-oxide`
-family of libraries, implementing large swaths of the Monero protocol in Rust.
-For information on the organization's information, please see our
-[governance document](./Governance.md).
+This is the Shekyl fork of monero-oxide, implementing FCMP++ (Full-Chain
+Membership Proofs) support for the Shekyl protocol. The library provides
+Rust-native types and serialization for the full Shekyl transaction format.
 
-The organization primarily develops and maintains two crates (with many crates
-underneath them):
+Originally forked from the upstream monero-oxide project, this fork adds:
 
-- [`monero-oxide`](./monero-oxide): A Rust implementation of the Monero
-  blockchain protocol.
-- [`monero-wallet`](./monero-oxide/wallet): Wallet functionality for the Monero
-  protocol.
+- **FCMP++ proof type** (`RCTTypeFcmpPlusPlusPqc = 7`) as the only accepted
+  proof type for Shekyl consensus
+- **Shekyl policy enforcement** rejecting legacy Monero proof types from genesis
+- **Post-quantum authentication** (ML-DSA-65 per-input signatures)
+- **`#![deny(unsafe_code)]`** across all critical crates
+- **Comprehensive FCMP++ test suite** and fuzz targets
 
-The latest copy of the documentation is available [here](
-  https://monero-oxide.github.io/monero-oxide/monero_wallet/index.html
-).
+The library primarily provides two crate families:
+
+- [`monero-oxide`](./monero-oxide): Shekyl transaction protocol types and
+  serialization.
+- [`monero-wallet`](./monero-oxide/wallet): Wallet functionality (scanning,
+  transaction construction).
+
+### Readiness Status
+
+See [`SHEKYL_READINESS.md`](./SHEKYL_READINESS.md) for the full pass/fail
+checklist required before stressnet and audit signoff.
 
 We welcome contributions, either via making issues or opening pull requests.
 For the latter, please see our [contributing guidelines](./Contributing.md).

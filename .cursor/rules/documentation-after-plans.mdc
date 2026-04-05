@@ -1,0 +1,24 @@
+---
+description: Documentation must be updated after executing a Plan; doc update is always the last TODO.
+alwaysApply: true
+---
+
+# Documentation After Plans
+
+After any Plan is executed, documentation must be read and updated to reflect the changes.
+
+## Rules
+
+- **Always the last TODO**: When creating or executing a Plan (task list), the final TODO must be: read and update relevant documentation.
+- **Before closing a Plan**: Before marking a Plan complete, read the docs that cover the changed area (e.g. `docs/`, README, design docs, API comments) and update them so they match the current behavior, APIs, or design.
+- **What to update**: Fix outdated steps, names, examples, and TODOs; add or revise sections for new behavior; keep cross-references and checklist items accurate.
+- **Scope**: Prefer docs under `docs/` and the main README; update file-level or inline docs (e.g. Doxygen, module READMEs) when the change touches that code.
+
+## Example
+
+When a Plan has N tasks, the (N+1)th or last task should be:
+
+- "Read and update documentation (docs/*.md, README, design/API docs) to reflect the changes."
+- "Ensure CHANGELOG.md is apporpriately updated"
+
+Complete that task before considering the Plan done.

@@ -1,0 +1,39 @@
+---
+description: Prefer Rust over C++ for new code and when modifying existing modules.
+alwaysApply: true
+---
+
+# Rust-Preferred Development
+
+When writing new code or substantially modifying existing C++ modules, prefer Rust. The goal is a gradual inside-out migration from C++ to Rust for memory safety, modern tooling, and tighter compilation.
+
+## Architecture
+
+All Rust code lives under `rust/` in a Cargo workspace. The single FFI crate `shekyl-ffi` produces `libshekyl_ffi.a`, linked into C++ targets via `cmake/BuildRust.cmake`. New Rust functionality follows this pattern:
+
+1. Implement logic in a dedicated Rust crate under `rust/` (e.g., `shekyl-crypto`, `shekyl-net`).
+2. Expose a C ABI in `rust/shekyl-ffi/src/lib.rs` with `#[no_mangle] pub extern "C" fn`.
+3. Declare the FFI in `src/shekyl/shekyl_ffi.h`.
+4. Call from C++ through the header. Delete the replaced C++ code once the Rust path is verified.
+
+## When to use Rust
+
+- **New modules**: Always Rust. No new C++ files unless extending an existing C++ module that cannot yet be migrated.
+- **Crypto primitives**: Hashing, KDFs, signatures, key derivation -- use RustCrypto crates (`sha2`, `blake2`, `ed25519-dalek`, `curve25519-dalek`, `hkdf`, etc.).
+- **Pure computation**: Economics, staking math, fee calculations, serialization helpers -- already in Rust, extend there.
+- **Data structures with no C++ coupling**: If a struct only flows through FFI boundaries, define it in Rust.
+
+## When C++ is acceptable
+
+- Touching files deeply coupled to epee, LMDB, or Boost.Serialization where extraction cost exceeds benefit.
+- Hot-fix patches to existing C++ where a Rust rewrite would delay the fix.
+- Test harnesses that must link against C++ test infrastructure (core_tests, unit_tests).
+
+## Rules
+
+- Never add new Boost dependencies. Use C++17 standard library or Rust equivalents.
+- When modifying a C++ function that is purely computational (no I/O, no database), consider extracting it to Rust behind FFI.
+- Use `cbindgen` or hand-maintained headers for FFI -- keep `shekyl_ffi.h` in sync with `lib.rs`.
+- All Rust code must compile with `#![deny(unsafe_code)]` at the crate level, except `shekyl-ffi` which requires `unsafe` for FFI exports.
+- Pin Rust dependency versions in `Cargo.lock`. Audit new crate additions with `cargo audit`.
+- Cross-compilation targets must work: verify `BuildRust.cmake` handles the new crate for all CI platforms.

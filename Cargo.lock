@@ -924,18 +924,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "monero-borromean"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "monero-generators",
- "monero-io",
- "monero-primitives",
- "std-shims",
- "zeroize",
-]
-
-[[package]]
 name = "monero-bulletproofs"
 version = "0.1.0"
 dependencies = [
@@ -946,26 +934,6 @@ dependencies = [
  "monero-primitives",
  "rand_core",
  "std-shims",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
-name = "monero-clsag"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "dalek-ff-group 0.5.0",
- "flexible-transcript",
- "group",
- "modular-frost",
- "monero-generators",
- "monero-io",
- "monero-primitives",
- "rand_chacha",
- "rand_core",
- "std-shims",
- "subtle",
  "thiserror",
  "zeroize",
 ]
@@ -1023,32 +991,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "monero-mlsag"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "monero-generators",
- "monero-io",
- "monero-primitives",
- "std-shims",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "monero-oxide"
 version = "0.1.4-alpha"
 dependencies = [
  "curve25519-dalek",
  "hex",
  "hex-literal",
- "monero-borromean",
  "monero-bulletproofs",
- "monero-clsag",
  "monero-fcmp-plus-plus",
  "monero-generators",
  "monero-io",
- "monero-mlsag",
  "monero-primitives",
  "serde",
  "serde_json",
@@ -1129,7 +1081,6 @@ dependencies = [
  "hex",
  "modular-frost",
  "monero-address",
- "monero-clsag",
  "monero-oxide",
  "monero-rpc",
  "monero-simple-request-rpc",

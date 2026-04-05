@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
+#![deny(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use core::{
@@ -79,9 +80,9 @@ pub struct ScannableBlock {
   pub block: Block,
   /// The non-miner transactions within this block.
   pub transactions: Vec<Transaction<Pruned>>,
-  /// The output index for the first RingCT output within this block.
+  /// The output index for the first confidential (zero-amount) output within this block.
   ///
-  /// None if there are no RingCT outputs within this block, Some otherwise.
+  /// None if there are no confidential outputs within this block, Some otherwise.
   pub output_index_for_first_ringct_output: Option<u64>,
 }
 
@@ -210,7 +211,7 @@ struct TransactionsResponse {
   txs: Vec<TransactionResponse>,
 }
 
-/// The response to an query for the information of a RingCT output.
+/// The response to a query for the information of a confidential (zero-amount) output.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OutputInformation {
   /// The block number of the block this output was added to the chain in.
@@ -676,7 +677,7 @@ pub trait Rpc: Sync + Clone {
   }
 
   /// Get a block's scannable form by its hash.
-  // TODO: get_blocks.bin
+  // RELEASE-BLOCKER(shekyl): Implement bulk block fetch via get_blocks.bin for sync performance
   fn get_scannable_block_by_hash(
     &self,
     hash: [u8; 32],
@@ -685,7 +686,7 @@ pub trait Rpc: Sync + Clone {
   }
 
   /// Get a block's scannable form by its number.
-  // TODO: get_blocks_by_height.bin
+  // RELEASE-BLOCKER(shekyl): Implement bulk height-based fetch via get_blocks_by_height.bin
   fn get_scannable_block_by_number(
     &self,
     number: usize,
@@ -1019,7 +1020,7 @@ pub trait Rpc: Sync + Clone {
   }
 }
 
-/// A trait for any object which can be used to select RingCT decoys.
+/// A trait for any object which can be used to select decoys.
 ///
 /// An implementation is provided for any satisfier of `Rpc`. It is not recommended to use an `Rpc`
 /// object to satisfy this. This should be satisfied by a local store of the output distribution,
@@ -1033,22 +1034,22 @@ pub trait DecoyRpc: Sync {
     &self,
   ) -> impl Send + Future<Output = Result<usize, RpcError>>;
 
-  /// Get the RingCT (zero-amount) output distribution.
+  /// Get the zero-amount output distribution.
   ///
   /// `range` is in terms of block numbers. The result may be smaller than the requested range if
-  /// the range starts before RingCT outputs were created on-chain.
+  /// the range starts before zero-amount outputs were created on-chain.
   fn get_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
 
-  /// Get the specified outputs from the RingCT (zero-amount) pool.
+  /// Get the specified outputs from the zero-amount pool.
   fn get_outs(
     &self,
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<OutputInformation>, RpcError>>;
 
-  /// Get the specified outputs from the RingCT (zero-amount) pool, but only return them if their
+  /// Get the specified outputs from the zero-amount pool, but only return them if their
   /// timelock has been satisfied.
   ///
   /// The timelock being satisfied is distinct from being free of the 10-block lock applied to all
@@ -1278,7 +1279,7 @@ impl<R: Rpc> DecoyRpc for R {
         vec![]
       };
 
-      // TODO: https://github.com/serai-dex/serai/issues/104
+      // RELEASE-BLOCKER(shekyl): Validate decoy selection against Shekyl rules (serai#104 equivalent)
       outs
         .iter()
         .enumerate()

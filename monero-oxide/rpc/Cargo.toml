@@ -1,10 +1,10 @@
 [package]
 name = "monero-rpc"
 version = "0.1.0"
-description = "Trait for an RPC connection to a Monero daemon, built around monero-oxide"
+description = "Trait for an RPC connection to a Shekyl daemon, built around monero-oxide"
 license = "MIT"
-repository = "https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/rpc"
-authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+repository = "https://github.com/Shekyl-Foundation/monero-oxide/tree/main/monero-oxide/rpc"
+authors = ["Luke Parker <lukeparker5132@gmail.com>", "Shekyl Foundation <dev@shekyl.org>"]
 edition = "2021"
 rust-version = "1.75"
 
