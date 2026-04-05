@@ -299,7 +299,7 @@ where
 
     {
       let c1_commitments = c1_branches + (c1_words * COMMITMENT_WORD_LEN).div_ceil(c1_padded_pow_2);
-      let ni = 2 + (2 * (c1_commitments / 2));
+      let ni = 2 + (2 * c1_commitments);
       let l_r_poly_len = 1 + ni + 1;
       let t_poly_len = (2 * l_r_poly_len) - 1;
       let t_commitments = t_poly_len - 1;
@@ -308,7 +308,7 @@ where
 
     {
       let c2_commitments = c2_branches + (c2_words * COMMITMENT_WORD_LEN).div_ceil(c2_padded_pow_2);
-      let ni = 2 + (2 * (c2_commitments / 2));
+      let ni = 2 + (2 * c2_commitments);
       let l_r_poly_len = 1 + ni + 1;
       let t_poly_len = (2 * l_r_poly_len) - 1;
       let t_commitments = t_poly_len - 1;
