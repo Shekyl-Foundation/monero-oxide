@@ -9,19 +9,19 @@ members = [
   "crypto/fcmps/ec-gadgets",
   "crypto/fcmps",
 
-  "monero-oxide/io",
-  "monero-oxide/generators",
-  "monero-oxide/primitives",
-  "monero-oxide/fcmp/bulletproofs",
-  "monero-oxide/fcmp/fcmp++",
-  "monero-oxide",
+  "shekyl-oxide/io",
+  "shekyl-oxide/generators",
+  "shekyl-oxide/primitives",
+  "shekyl-oxide/fcmp/bulletproofs",
+  "shekyl-oxide/fcmp/fcmp++",
+  "shekyl-oxide",
 
-  "monero-oxide/rpc",
-  "monero-oxide/rpc/simple-request",
+  "shekyl-oxide/rpc",
+  "shekyl-oxide/rpc/simple-request",
 
-  "monero-oxide/wallet/base58",
-  "monero-oxide/wallet/address",
-  "monero-oxide/wallet",
+  "shekyl-oxide/wallet/base58",
+  "shekyl-oxide/wallet/address",
+  "shekyl-oxide/wallet",
 
   "tests/no-std",
   "tests/verify-chain",
@@ -48,12 +48,12 @@ generalized-bulletproofs-circuit-abstraction = { opt-level = 3 }
 generalized-bulletproofs-ec-gadgets = { opt-level = 3 }
 full-chain-membership-proofs = { opt-level = 3 }
 
-monero-io = { opt-level = 3 }
-monero-generators = { opt-level = 3 }
-monero-primitives = { opt-level = 3 }
-monero-bulletproofs = { opt-level = 3 }
-monero-fcmp-plus-plus = { opt-level = 3 }
-monero-oxide = { opt-level = 3 }
+shekyl-io = { opt-level = 3 }
+shekyl-generators = { opt-level = 3 }
+shekyl-primitives = { opt-level = 3 }
+shekyl-bulletproofs = { opt-level = 3 }
+shekyl-fcmp-plus-plus = { opt-level = 3 }
+shekyl-oxide = { opt-level = 3 }
 
 [profile.release]
 panic = "unwind"

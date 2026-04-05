@@ -163,9 +163,9 @@ jobs:
           }
           check_workspace
 
-  monero-msrv:
+  shekyl-msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - name: Verify We Support Monero's MSRV for `monero-fcmp-plus-plus`
-        run: cargo +1.69 check -p monero-fcmp-plus-plus
+      - name: Verify We Support Shekyl's MSRV for `shekyl-fcmp-plus-plus`
+        run: cargo +1.69 check -p shekyl-fcmp-plus-plus

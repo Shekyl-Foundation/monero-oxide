@@ -1,9 +1,9 @@
 [package]
-name = "monero-oxide-no-std-tests"
+name = "shekyl-oxide-no-std-tests"
 version = "0.1.0"
-description = "A crate to test no-std builds of monero-oxide crates work"
+description = "A crate to test no-std builds of shekyl-oxide crates work"
 license = "MIT"
-repository = "https://github.com/Shekyl-Foundation/monero-oxide/tree/main/tests/no-std"
+repository = "https://github.com/Shekyl-Foundation/shekyl-oxide/tree/main/tests/no-std"
 authors = ["Luke Parker <lukeparker5132@gmail.com>", "Shekyl Foundation <dev@shekyl.org>"]
 keywords = ["nostd", "no_std", "alloc"]
 edition = "2021"
@@ -20,7 +20,7 @@ workspace = true
 # Helioselene SHOULD work on `no-std`, yet it uses `std-shims` which requires `alloc`
 helioselene = { path = "../../crypto/helioselene", default-features = false, optional = true }
 
-monero-wallet = { path = "../../monero-oxide/wallet", default-features = false, features = ["compile-time-generators"], optional = true }
+shekyl-wallet = { path = "../../shekyl-oxide/wallet", default-features = false, features = ["compile-time-generators"], optional = true }
 
 [features]
-alloc = ["helioselene/alloc", "monero-wallet"]
+alloc = ["helioselene/alloc", "shekyl-wallet"]

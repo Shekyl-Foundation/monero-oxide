@@ -1,10 +1,10 @@
-# monero-oxide (Shekyl fork)
+# shekyl-oxide (Shekyl fork)
 
-This is the Shekyl fork of monero-oxide, implementing FCMP++ (Full-Chain
+This is the Shekyl fork of shekyl-oxide, implementing FCMP++ (Full-Chain
 Membership Proofs) support for the Shekyl protocol. The library provides
 Rust-native types and serialization for the full Shekyl transaction format.
 
-Originally forked from the upstream monero-oxide project, this fork adds:
+Originally forked from the upstream shekyl-oxide project, this fork adds:
 
 - **FCMP++ proof type** (`RCTTypeFcmpPlusPlusPqc = 7`) as the only accepted
   proof type for Shekyl consensus
@@ -15,9 +15,9 @@ Originally forked from the upstream monero-oxide project, this fork adds:
 
 The library primarily provides two crate families:
 
-- [`monero-oxide`](./monero-oxide): Shekyl transaction protocol types and
+- [`shekyl-oxide`](./shekyl-oxide): Shekyl transaction protocol types and
   serialization.
-- [`monero-wallet`](./monero-oxide/wallet): Wallet functionality (scanning,
+- [`shekyl-wallet`](./shekyl-oxide/wallet): Wallet functionality (scanning,
   transaction construction).
 
 ### Readiness Status

@@ -3,5 +3,5 @@
 #[cfg(feature = "alloc")]
 pub mod alloc {
   pub use helioselene;
-  pub use monero_wallet;
+  pub use shekyl_wallet;
 }

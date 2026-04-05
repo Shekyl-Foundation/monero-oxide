@@ -5,14 +5,14 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use monero_oxide::{
+use shekyl_oxide::{
   fcmp::bulletproofs::BatchVerifier,
   transaction::Transaction,
   block::Block,
 };
 
-use monero_rpc::{RpcError, Rpc};
-use monero_simple_request_rpc::SimpleRequestRpc;
+use shekyl_rpc::{RpcError, Rpc};
+use shekyl_simple_request_rpc::SimpleRequestRpc;
 
 use tokio::task::JoinHandle;
 

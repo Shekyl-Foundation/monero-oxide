@@ -1,5 +1,5 @@
 name: build-dependencies
-description: Installs build dependencies for monero-oxide
+description: Installs build dependencies for shekyl-oxide
 
 runs:
   using: "composite"

@@ -1,6 +1,6 @@
 # Contributing
 
-All contributions to monero-oxide are done with pull requests. This project
+All contributions to shekyl-oxide are done with pull requests. This project
 has a series of established regulations regarding contributed code, as follows:
 
 1) All code contributed must be your own work as an individual, or legally

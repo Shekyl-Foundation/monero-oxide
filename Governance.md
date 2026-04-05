@@ -1,6 +1,6 @@
-# monero-oxide Governance
+# shekyl-oxide Governance
 
-The monero-oxide project is governed by two administrators, `kayabaNerve`
+The shekyl-oxide project is governed by two administrators, `kayabaNerve`
 (`@kayabaNerve:monero.social`) and `boog900` (`@boog900:monero.social`). Upon
 their disagreement, `j-berman` serves as tie-breaker regarding decisions. The
 tie-breaker may also serve in-place of where an administrator is needed, yet
@@ -15,8 +15,8 @@ requests.
 
 ## Place of Discussion
 
-monero-oxide discussions are to be held in `#cuprate:monero.social` pending
-the creation of a channel for monero-oxide itself.
+shekyl-oxide discussions are to be held in `#cuprate:monero.social` pending
+the creation of a channel for shekyl-oxide itself.
 
 ## Governance Changes
 

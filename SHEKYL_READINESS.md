@@ -1,4 +1,4 @@
-# Shekyl monero-oxide Readiness Checklist
+# Shekyl-Oxide Readiness Checklist
 
 This checklist must pass before stressnet completion and Phase 9 audit signoff.
 Any `FAIL` item is **stop-ship** for mainnet.
@@ -39,20 +39,20 @@ Any `FAIL` item is **stop-ship** for mainnet.
 | # | Gate | Status | Verification |
 |---|------|--------|-------------|
 | C-1 | Monero daemon version matrix removed (`v0.17.3.2`, `v0.18.3.4`) | PASS | `tests.yml` |
-| C-2 | Shekyl daemon integration (build from `feature/fcmp-plus-plus` branch) | PASS | `actions/monero/action.yml` |
-| C-3 | 14 FCMP++ integration tests passing | PASS | `cargo test --package monero-oxide --test tests` |
-| C-4 | Fuzz targets defined (`fuzz_rct_prunable_read`, `fuzz_transaction_read`, `fuzz_rct_base_read`) | PASS | `monero-oxide/fuzz/` |
+| C-2 | Shekyl daemon integration (build from `feature/fcmp-plus-plus` branch) | PASS | `actions/shekyl/action.yml` |
+| C-3 | 14 FCMP++ integration tests passing | PASS | `cargo test --package shekyl-oxide --test tests` |
+| C-4 | Fuzz targets defined (`fuzz_rct_prunable_read`, `fuzz_transaction_read`, `fuzz_rct_base_read`) | PASS | `shekyl-oxide/fuzz/` |
 
 ## Security & Quality
 
 | # | Gate | Status | Verification |
 |---|------|--------|-------------|
-| Q-1 | `#![deny(unsafe_code)]` on `monero-oxide` core crate | PASS | `lib.rs` |
-| Q-2 | `#![deny(unsafe_code)]` on `monero-wallet` crate | PASS | `wallet/src/lib.rs` |
-| Q-3 | `#![deny(unsafe_code)]` on `monero-rpc` crate | PASS | `rpc/src/lib.rs` |
-| Q-4 | `#![deny(unsafe_code)]` on `monero-fcmp-plus-plus` crate | PASS | `fcmp/fcmp++/src/lib.rs` |
+| Q-1 | `#![deny(unsafe_code)]` on `shekyl-oxide` core crate | PASS | `lib.rs` |
+| Q-2 | `#![deny(unsafe_code)]` on `shekyl-wallet` crate | PASS | `wallet/src/lib.rs` |
+| Q-3 | `#![deny(unsafe_code)]` on `shekyl-rpc` crate | PASS | `rpc/src/lib.rs` |
+| Q-4 | `#![deny(unsafe_code)]` on `shekyl-fcmp-plus-plus` crate | PASS | `fcmp/fcmp++/src/lib.rs` |
 | Q-5 | All FCMP++ cryptographic TODOs tagged `RELEASE-BLOCKER(shekyl)` | PASS | `rg RELEASE-BLOCKER` |
-| Q-6 | No `unsafe` blocks in monero-oxide workspace Rust sources (excluding target/) | PASS | Compilation with deny lint |
+| Q-6 | No `unsafe` blocks in shekyl-oxide workspace Rust sources (excluding target/) | PASS | Compilation with deny lint |
 
 ## Release Blockers (must resolve before audit signoff)
 
@@ -75,7 +75,7 @@ These items are tracked via `RELEASE-BLOCKER(shekyl)` annotations in source:
 cargo test --workspace
 
 # Check FCMP++ specific tests
-cargo test --package monero-oxide --test tests
+cargo test --package shekyl-oxide --test tests
 
 # Verify no unsafe code
 cargo check --workspace
@@ -84,5 +84,5 @@ cargo check --workspace
 rg 'RELEASE-BLOCKER' --glob '*.rs'
 
 # Run fuzz targets (requires cargo-fuzz)
-cd monero-oxide/fuzz && cargo +nightly fuzz run fuzz_transaction_read -- -max_total_time=300
+cd shekyl-oxide/fuzz && cargo +nightly fuzz run fuzz_transaction_read -- -max_total_time=300
 ```

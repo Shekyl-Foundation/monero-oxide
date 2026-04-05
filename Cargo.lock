@@ -899,204 +899,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "monero-address"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "hex-literal",
- "monero-base58",
- "monero-io",
- "rand_core",
- "serde",
- "serde_json",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
-name = "monero-base58"
-version = "0.1.0"
-dependencies = [
- "monero-primitives",
- "rand_core",
- "std-shims",
-]
-
-[[package]]
-name = "monero-bulletproofs"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex-literal",
- "monero-generators",
- "monero-io",
- "monero-primitives",
- "rand_core",
- "std-shims",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
-name = "monero-fcmp-plus-plus"
-version = "0.1.0"
-dependencies = [
- "blake2",
- "ciphersuite",
- "dalek-ff-group 0.5.0",
- "ec-divisors",
- "flexible-transcript",
- "full-chain-membership-proofs",
- "generalized-bulletproofs",
- "generalized-bulletproofs-ec-gadgets",
- "generic-array 1.1.1",
- "helioselene",
- "modular-frost",
- "monero-generators",
- "multiexp",
- "rand_chacha",
- "rand_core",
- "std-shims",
- "zeroize",
-]
-
-[[package]]
-name = "monero-generators"
-version = "0.4.0"
-dependencies = [
- "blake2",
- "ciphersuite",
- "crypto-bigint",
- "curve25519-dalek",
- "dalek-ff-group 0.5.0",
- "full-chain-membership-proofs",
- "generalized-bulletproofs",
- "group",
- "helioselene",
- "hex",
- "monero-io",
- "sha3",
- "std-shims",
- "subtle",
-]
-
-[[package]]
-name = "monero-io"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "std-shims",
- "zeroize",
-]
-
-[[package]]
-name = "monero-oxide"
-version = "0.1.4-alpha"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "hex-literal",
- "monero-bulletproofs",
- "monero-fcmp-plus-plus",
- "monero-generators",
- "monero-io",
- "monero-primitives",
- "serde",
- "serde_json",
- "std-shims",
- "zeroize",
-]
-
-[[package]]
-name = "monero-oxide-no-std-tests"
-version = "0.1.0"
-dependencies = [
- "helioselene",
- "monero-wallet",
-]
-
-[[package]]
-name = "monero-oxide-verify-chain"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "monero-oxide",
- "monero-rpc",
- "monero-simple-request-rpc",
- "rand_core",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "monero-primitives"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "monero-generators",
- "monero-io",
- "sha3",
- "std-shims",
- "zeroize",
-]
-
-[[package]]
-name = "monero-rpc"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "monero-address",
- "monero-oxide",
- "serde",
- "serde_json",
- "std-shims",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
-name = "monero-simple-request-rpc"
-version = "0.1.0"
-dependencies = [
- "digest_auth",
- "hex",
- "monero-address",
- "monero-rpc",
- "simple-request",
- "tokio",
- "zeroize",
-]
-
-[[package]]
-name = "monero-wallet"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "flexible-transcript",
- "hex",
- "modular-frost",
- "monero-address",
- "monero-oxide",
- "monero-rpc",
- "monero-simple-request-rpc",
- "rand",
- "rand_chacha",
- "rand_core",
- "rand_distr",
- "serde",
- "serde_json",
- "std-shims",
- "thiserror",
- "tokio",
- "zeroize",
-]
-
-[[package]]
 name = "multiexp"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1479,6 +1281,204 @@ checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest",
  "keccak",
+]
+
+[[package]]
+name = "shekyl-address"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "hex-literal",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "shekyl-base58",
+ "shekyl-io",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-base58"
+version = "0.1.0"
+dependencies = [
+ "rand_core",
+ "shekyl-primitives",
+ "std-shims",
+]
+
+[[package]]
+name = "shekyl-bulletproofs"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex-literal",
+ "rand_core",
+ "shekyl-generators",
+ "shekyl-io",
+ "shekyl-primitives",
+ "std-shims",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-fcmp-plus-plus"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "ciphersuite",
+ "dalek-ff-group 0.5.0",
+ "ec-divisors",
+ "flexible-transcript",
+ "full-chain-membership-proofs",
+ "generalized-bulletproofs",
+ "generalized-bulletproofs-ec-gadgets",
+ "generic-array 1.1.1",
+ "helioselene",
+ "modular-frost",
+ "multiexp",
+ "rand_chacha",
+ "rand_core",
+ "shekyl-generators",
+ "std-shims",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-generators"
+version = "0.4.0"
+dependencies = [
+ "blake2",
+ "ciphersuite",
+ "crypto-bigint",
+ "curve25519-dalek",
+ "dalek-ff-group 0.5.0",
+ "full-chain-membership-proofs",
+ "generalized-bulletproofs",
+ "group",
+ "helioselene",
+ "hex",
+ "sha3",
+ "shekyl-io",
+ "std-shims",
+ "subtle",
+]
+
+[[package]]
+name = "shekyl-io"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "std-shims",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-oxide"
+version = "0.1.4-alpha"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "hex-literal",
+ "serde",
+ "serde_json",
+ "shekyl-bulletproofs",
+ "shekyl-fcmp-plus-plus",
+ "shekyl-generators",
+ "shekyl-io",
+ "shekyl-primitives",
+ "std-shims",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-oxide-no-std-tests"
+version = "0.1.0"
+dependencies = [
+ "helioselene",
+ "shekyl-wallet",
+]
+
+[[package]]
+name = "shekyl-oxide-verify-chain"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "shekyl-oxide",
+ "shekyl-rpc",
+ "shekyl-simple-request-rpc",
+ "tokio",
+]
+
+[[package]]
+name = "shekyl-primitives"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "sha3",
+ "shekyl-generators",
+ "shekyl-io",
+ "std-shims",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-rpc"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "shekyl-address",
+ "shekyl-oxide",
+ "std-shims",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-simple-request-rpc"
+version = "0.1.0"
+dependencies = [
+ "digest_auth",
+ "hex",
+ "shekyl-address",
+ "shekyl-rpc",
+ "simple-request",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "shekyl-wallet"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "flexible-transcript",
+ "hex",
+ "modular-frost",
+ "rand",
+ "rand_chacha",
+ "rand_core",
+ "rand_distr",
+ "serde",
+ "serde_json",
+ "shekyl-address",
+ "shekyl-oxide",
+ "shekyl-rpc",
+ "shekyl-simple-request-rpc",
+ "std-shims",
+ "thiserror",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
