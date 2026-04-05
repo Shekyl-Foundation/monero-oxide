@@ -51,9 +51,9 @@ pub mod tree;
 #[cfg(test)]
 mod tests;
 
-/// The length of branches proved for on the first layer.
+/// The length of branches proved for on the first layer (outputs per leaf chunk).
 ///
-/// The leaves' layer is six times as wide.
+/// The leaves' layer width in scalars is `C::leaf_tuple_width() * LAYER_ONE_LEN`.
 pub const LAYER_ONE_LEN: usize = 38;
 /// The length of branches proved for on the second layer.
 pub const LAYER_TWO_LEN: usize = 18;
@@ -98,17 +98,20 @@ impl<G: Group> Output<G> {
   }
 }
 
-/// A struct representing an input tuple.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
+/// A struct representing an input tuple (blinded points + extra leaf public values).
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct Input<F: PrimeField> {
   O_tilde: (F, F),
   I_tilde: (F, F),
   R: (F, F),
   C_tilde: (F, F),
+  /// Public values for extra leaf scalars (e.g. `[H(pqc_pk)]` for Shekyl).
+  /// Empty for the upstream 3-scalar leaf format.
+  pub extra_leaf_scalars: Vec<F>,
 }
 
 impl<F: PrimeField> Input<F> {
-  /// Construct a new input tuple.
+  /// Construct a new input tuple with no extra leaf scalars.
   pub fn new<G: DivisorCurve<FieldElement = F>>(
     O_tilde: G,
     I_tilde: G,
@@ -120,6 +123,24 @@ impl<F: PrimeField> Input<F> {
       I_tilde: G::to_xy(I_tilde).ok_or(FcmpError::IdentityPoint)?,
       R: G::to_xy(R).ok_or(FcmpError::IdentityPoint)?,
       C_tilde: G::to_xy(C_tilde).ok_or(FcmpError::IdentityPoint)?,
+      extra_leaf_scalars: vec![],
+    })
+  }
+
+  /// Construct a new input tuple with extra leaf scalars.
+  pub fn with_extra_scalars<G: DivisorCurve<FieldElement = F>>(
+    O_tilde: G,
+    I_tilde: G,
+    R: G,
+    C_tilde: G,
+    extra_leaf_scalars: Vec<F>,
+  ) -> Result<Self, FcmpError> {
+    Ok(Input {
+      O_tilde: G::to_xy(O_tilde).ok_or(FcmpError::IdentityPoint)?,
+      I_tilde: G::to_xy(I_tilde).ok_or(FcmpError::IdentityPoint)?,
+      R: G::to_xy(R).ok_or(FcmpError::IdentityPoint)?,
+      C_tilde: G::to_xy(C_tilde).ok_or(FcmpError::IdentityPoint)?,
+      extra_leaf_scalars,
     })
   }
 }
@@ -143,6 +164,7 @@ where
   pub(crate) O: (Variable, Variable),
   pub(crate) I: (Variable, Variable),
   pub(crate) C: (Variable, Variable),
+  pub(crate) extra_leaf_vars: Vec<Variable>,
   pub(crate) o_blind_claim: PointWithDlog<C::OcParameters>,
   pub(crate) i_blind_u_claim: PointWithDlog<C::OcParameters>,
   pub(crate) i_blind_v_claim: PointWithDlog<C::OcParameters>,
@@ -262,7 +284,9 @@ where
 
     let c1_root = layers % 2;
     let c2_root = 1 - c1_root;
-    let c1_branches = (inputs * (layers / 2)) + c1_root;
+    // Each extra leaf scalar per input adds a 1-element branch to the C1 tape
+    let extra_scalar_branches = inputs * C::EXTRA_LEAF_SCALARS;
+    let c1_branches = (inputs * (layers / 2)) + c1_root + extra_scalar_branches;
     let c2_branches = (inputs * ((layers / 2) - c2_root)) + c2_root;
 
     const WORDS_PER_DLOG: usize = 2;
@@ -368,6 +392,8 @@ where
     input: &Input<<C::C1 as Ciphersuite>::F>,
     opening: TranscriptedInput<C>,
   ) -> Result<(), FcmpError> {
+    let leaf_tuple_width = C::leaf_tuple_width();
+
     // Open the input tuple to the output and prove its membership on the first branch
     c1_circuit.first_layer(
       transcript,
@@ -396,12 +422,15 @@ where
       opening.c_blind_claim,
       opening.C,
       //
+      opening.extra_leaf_vars.clone(),
+      input.extra_leaf_scalars.clone(),
+      //
       // If the leaves are the only layer, the root branch is the leaves
       // Else, the first C1 branch is the leaves
       (if layers == 1 { root.clone() } else { c1_branches.next().unwrap() })
-        .chunks(6)
+        .chunks(leaf_tuple_width)
         .map(|chunk| {
-          assert_eq!(chunk.len(), 6);
+          assert_eq!(chunk.len(), leaf_tuple_width);
           chunk.to_vec()
         })
         .collect(),
@@ -527,19 +556,18 @@ where
     <C::C2 as Ciphersuite>::G: GroupEncoding<Repr = [u8; 32]>,
   {
     let tree: TreeRoot<C::C1, C::C2> = match &branches.root {
-      RootBranch::Leaves(leaves) => {
-        let mut items = Vec::with_capacity(leaves.len());
-        for (scalar, point) in leaves
-          .iter()
-          .flat_map(|output| {
-            let O = <C::OC as Ciphersuite>::G::to_xy(output.O).unwrap();
-            let I = <C::OC as Ciphersuite>::G::to_xy(output.I).unwrap();
-            let C = <C::OC as Ciphersuite>::G::to_xy(output.C).unwrap();
-            [O.0, O.1, I.0, I.1, C.0, C.1]
-          })
-          .zip(params.curve_1_generators.g_bold_slice())
-        {
-          items.push((scalar, *point));
+      RootBranch::Leaves(leaves, extras) => {
+        let mut scalars = Vec::new();
+        for (output, extra) in leaves.iter().zip(extras.iter()) {
+          let O = <C::OC as Ciphersuite>::G::to_xy(output.O).unwrap();
+          let I = <C::OC as Ciphersuite>::G::to_xy(output.I).unwrap();
+          let C_point = <C::OC as Ciphersuite>::G::to_xy(output.C).unwrap();
+          scalars.extend(&[O.0, I.0, C_point.0]);
+          scalars.extend(extra);
+        }
+        let mut items = Vec::with_capacity(scalars.len());
+        for (scalar, point) in scalars.iter().zip(params.curve_1_generators.g_bold_slice()) {
+          items.push((*scalar, *point));
         }
         TreeRoot::C1(params.curve_1_hash_init + multiexp::multiexp(&items))
       }
@@ -615,8 +643,10 @@ where
     let mut root_blind_C1 = None;
     let mut root_blind_C2 = None;
     let root_blind_R: [u8; 32];
+    let extra_c1_branch_count = branches.per_input.len() * C::EXTRA_LEAF_SCALARS;
     if matches!(tree, TreeRoot::C1(_)) {
-      root_blind_C1 = Some(pvc_blinds_1[branches.branches_1_blinds.len()]);
+      root_blind_C1 =
+        Some(pvc_blinds_1[branches.branches_1_blinds.len() + extra_c1_branch_count]);
       let root_blind_r = Zeroizing::new(<C::C1 as Ciphersuite>::F::random(&mut *rng));
       root_blind_R = (params.curve_1_generators.h() * *root_blind_r).to_bytes();
       root_blind_r_C1 = Some(root_blind_r);
@@ -690,10 +720,13 @@ where
 
     let TranscriptedBranches { root, per_input: transcripted_branches_per_input } =
       transcripted_branches;
-    for (transcripted_branch, (input, transcripted_input)) in transcripted_branches_per_input
+    for (transcripted_branch, (input, mut transcripted_input)) in transcripted_branches_per_input
       .into_iter()
       .zip(branches.per_input.iter().zip(transcripted_inputs))
     {
+      transcripted_input.extra_leaf_vars = transcripted_branch.extra_leaf_vars;
+      let mut fcmp_input = input.input.clone();
+      fcmp_input.extra_leaf_scalars = input.output_extra_scalars.clone();
       Self::input(
         params,
         transcripted_branch.c1.len() + transcripted_branch.c2.len() + 1,
@@ -707,7 +740,7 @@ where
         &mut transcripted_branch.c2.into_iter(),
         &mut c1_commitments,
         &mut c2_commitments,
-        &input.input,
+        &fcmp_input,
         transcripted_input,
       )?;
     }
@@ -783,12 +816,14 @@ where
     };
     let mut c2_branches = Vec::with_capacity(layers / 2);
 
-    // Append the leaves and the non-root branches to the tape
+    let leaf_layer_len = C::leaf_tuple_width() * LAYER_ONE_LEN;
+
+    // Phase 1: Standard per-input branches (leaves + tree layers)
     for _ in inputs {
       for i in 0 .. (layers - 1) {
         if (i % 2) == 0 {
           c1_branches.push(
-            c1_tape.append_branch(if i == 0 { 6 * LAYER_ONE_LEN } else { LAYER_ONE_LEN }, None),
+            c1_tape.append_branch(if i == 0 { leaf_layer_len } else { LAYER_ONE_LEN }, None),
           );
         } else {
           c2_branches.push(c2_tape.append_branch(LAYER_TWO_LEN, None));
@@ -796,9 +831,20 @@ where
       }
     }
 
-    // Append the root branch to the tape
+    // Phase 2: Extra leaf scalar branches for all inputs
+    let mut input_extra_leaf_vars = vec![];
+    for _ in inputs {
+      let mut extra_vars = vec![];
+      for _ in 0 .. C::EXTRA_LEAF_SCALARS {
+        let vars = c1_tape.append_branch(1, None);
+        extra_vars.push(vars[0]);
+      }
+      input_extra_leaf_vars.push(extra_vars);
+    }
+
+    // Phase 3: Root branch
     let root = if (layers % 2) == 1 {
-      c1_tape.append_branch(if layers == 1 { 6 * LAYER_ONE_LEN } else { LAYER_ONE_LEN }, None)
+      c1_tape.append_branch(if layers == 1 { leaf_layer_len } else { LAYER_ONE_LEN }, None)
     } else {
       c2_tape.append_branch(LAYER_TWO_LEN, None)
     };
@@ -809,7 +855,7 @@ where
     };
 
     let mut input_openings = Vec::with_capacity(inputs.len());
-    for _ in inputs {
+    for (_, extra_leaf_vars) in inputs.iter().zip(input_extra_leaf_vars) {
       // Since this is presumed over Ed25519, which has a 253-bit discrete logarithm, we have two
       // items avilable in padding. We use this padding for all the other points we must commit to
       // For o_blind, we use the padding for O
@@ -838,6 +884,7 @@ where
         O: (O[0], O[1]),
         I: (I[0], I[1]),
         C: (C[0], C[1]),
+        extra_leaf_vars,
         o_blind_claim,
         i_blind_u_claim,
         i_blind_v_claim,
@@ -846,7 +893,7 @@ where
       });
     }
 
-    // We now have committed to O, I, C, and all interpolated points
+    // We now have committed to O, I, C, extra leaf scalars, and all interpolated points
 
     // The first circuit's tape opens the blinds from the second curve
     let mut commitment_blind_claims_1 = vec![];

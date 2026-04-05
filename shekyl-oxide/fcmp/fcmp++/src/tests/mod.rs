@@ -5,7 +5,7 @@ use rand_core::OsRng;
 use multiexp::multiexp_vartime;
 use dalek_ff_group::{Scalar, EdwardsPoint, Ed25519};
 use ciphersuite::{
-  group::{Group, GroupEncoding},
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
 };
 use helioselene::{Selene, Helios};
@@ -44,19 +44,19 @@ fn test() {
     (input, spend_auth_and_linkability)
   };
 
-  let (tree, fcmp) = {
+  let (tree, fcmp, h_pqc) = {
     let leaves = vec![output];
+    let h_pqc = <Selene as Ciphersuite>::F::random(&mut OsRng);
+    let leaves_extra_scalars: Vec<Vec<<Selene as Ciphersuite>::F>> = vec![vec![h_pqc]];
 
     let tree = TreeRoot::<Selene, Helios>::C1(
       *SELENE_HASH_INIT +
         multiexp_vartime(
           &([
             <Ed25519 as Ciphersuite>::G::to_xy(output.O()).unwrap().0,
-            <Ed25519 as Ciphersuite>::G::to_xy(output.O()).unwrap().1,
             <Ed25519 as Ciphersuite>::G::to_xy(output.I()).unwrap().0,
-            <Ed25519 as Ciphersuite>::G::to_xy(output.I()).unwrap().1,
             <Ed25519 as Ciphersuite>::G::to_xy(output.C()).unwrap().0,
-            <Ed25519 as Ciphersuite>::G::to_xy(output.C()).unwrap().1,
+            h_pqc,
           ]
           .into_iter()
           .zip(SELENE_FCMP_GENERATORS.generators.g_bold_slice().iter().copied())
@@ -64,7 +64,14 @@ fn test() {
         ),
     );
 
-    let path = Path { output, leaves, curve_2_layers: vec![], curve_1_layers: vec![] };
+    let path = Path {
+      output,
+      output_extra_scalars: vec![h_pqc],
+      leaves,
+      leaves_extra_scalars,
+      curve_2_layers: vec![],
+      curve_1_layers: vec![],
+    };
 
     let branches = Branches::new(vec![path]).unwrap();
 
@@ -89,7 +96,7 @@ fn test() {
     );
 
     let blinded_branches = branches.blind(vec![output_blinds], vec![], vec![]).unwrap();
-    (tree, Fcmp::prove(&mut OsRng, &*FCMP_PARAMS, blinded_branches).unwrap())
+    (tree, Fcmp::prove(&mut OsRng, &*FCMP_PARAMS, blinded_branches).unwrap(), h_pqc)
   };
 
   let fcmp_plus_plus = FcmpPlusPlus::new(vec![(input, spend_auth_and_linkability)], fcmp);
@@ -108,6 +115,7 @@ fn test() {
       1, // Layers
       [0; 32],
       vec![L],
+      vec![h_pqc],
     )
     .unwrap();
 
@@ -127,6 +135,7 @@ fn test() {
       1, // Layers
       [0; 32],
       vec![L],
+      vec![h_pqc],
     )
     .unwrap();
 

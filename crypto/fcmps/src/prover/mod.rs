@@ -21,8 +21,14 @@ where
 {
   /// The output being proven for.
   pub output: Output<<C::OC as Ciphersuite>::G>,
+  /// Extra leaf scalars for the proven output (e.g. `[H(pqc_pk)]` for Shekyl).
+  /// Length must equal `C::EXTRA_LEAF_SCALARS`.
+  pub output_extra_scalars: Vec<<C::C1 as Ciphersuite>::F>,
   /// The leaves along this path.
   pub leaves: Vec<Output<<C::OC as Ciphersuite>::G>>,
+  /// Extra leaf scalars for each sibling leaf, parallel to `leaves`.
+  /// Each inner vec length must equal `C::EXTRA_LEAF_SCALARS`.
+  pub leaves_extra_scalars: Vec<Vec<<C::C1 as Ciphersuite>::F>>,
   /// The branches on this path proven for with the second curve.
   pub curve_2_layers: Vec<Vec<<C::C2 as Ciphersuite>::F>>,
   /// The branches on this path proven for with the first curve.
@@ -42,6 +48,7 @@ where
 {
   // This is None if the leaves directly feed into the root
   pub(crate) leaves: Option<Vec<Output<<C::OC as Ciphersuite>::G>>>,
+  pub(crate) leaves_extra_scalars: Option<Vec<Vec<<C::C1 as Ciphersuite>::F>>>,
   pub(crate) curve_2_layers: Vec<Vec<<C::C2 as Ciphersuite>::F>>,
   pub(crate) curve_1_layers: Vec<Vec<<C::C1 as Ciphersuite>::F>>,
 }
@@ -54,7 +61,7 @@ where
   <C::C1 as Ciphersuite>::G: DivisorCurve<FieldElement = <C::C2 as Ciphersuite>::F>,
   <C::C2 as Ciphersuite>::G: DivisorCurve<FieldElement = <C::C1 as Ciphersuite>::F>,
 {
-  Leaves(Vec<Output<<C::OC as Ciphersuite>::G>>),
+  Leaves(Vec<Output<<C::OC as Ciphersuite>::G>>, Vec<Vec<<C::C1 as Ciphersuite>::F>>),
   C1(Vec<<C::C1 as Ciphersuite>::F>),
   C2(Vec<<C::C2 as Ciphersuite>::F>),
 }
@@ -68,7 +75,11 @@ where
   <C::C2 as Ciphersuite>::G: DivisorCurve<FieldElement = <C::C1 as Ciphersuite>::F>,
 {
   #[allow(clippy::type_complexity)]
-  per_input: Vec<(Output<<C::OC as Ciphersuite>::G>, BranchesWithoutRootBranch<C>)>,
+  per_input: Vec<(
+    Output<<C::OC as Ciphersuite>::G>,
+    Vec<<C::C1 as Ciphersuite>::F>,
+    BranchesWithoutRootBranch<C>,
+  )>,
   root: RootBranch<C>,
 }
 
@@ -82,6 +93,8 @@ where
 {
   /// The output.
   output: Output<<C::OC as Ciphersuite>::G>,
+  /// Extra leaf scalars for this output.
+  pub(crate) output_extra_scalars: Vec<<C::C1 as Ciphersuite>::F>,
   /// The output blinds.
   output_blinds: OutputBlinds<<C::OC as Ciphersuite>::G>,
   /// The input.
@@ -134,8 +147,10 @@ where
     let root_is_c1 = expected_2_layers == expected_1_layers;
     let root = if root_is_leaves {
       let mut leaves = vec![];
+      let mut leaves_extras = vec![];
       core::mem::swap(&mut leaves, &mut first.leaves);
-      RootBranch::Leaves(leaves)
+      core::mem::swap(&mut leaves_extras, &mut first.leaves_extra_scalars);
+      RootBranch::Leaves(leaves, leaves_extras)
     } else if root_is_c1 {
       RootBranch::C1(first.curve_1_layers.pop().unwrap())
     } else {
@@ -144,8 +159,10 @@ where
 
     let mut per_input = vec![(
       first.output,
+      first.output_extra_scalars,
       BranchesWithoutRootBranch {
         leaves: (!root_is_leaves).then_some(first.leaves),
+        leaves_extra_scalars: (!root_is_leaves).then_some(first.leaves_extra_scalars),
         curve_1_layers: first.curve_1_layers,
         curve_2_layers: first.curve_2_layers,
       },
@@ -161,8 +178,8 @@ where
 
       // Check the root is consistent
       match &root {
-        RootBranch::Leaves(leaves) => {
-          if leaves != &path.leaves {
+        RootBranch::Leaves(leaves, leaves_extras) => {
+          if leaves != &path.leaves || leaves_extras != &path.leaves_extra_scalars {
             None?;
           }
         }
@@ -180,8 +197,10 @@ where
 
       per_input.push((
         path.output,
+        path.output_extra_scalars,
         BranchesWithoutRootBranch {
           leaves: (!root_is_leaves).then_some(path.leaves),
+          leaves_extra_scalars: (!root_is_leaves).then_some(path.leaves_extra_scalars),
           curve_1_layers: path.curve_1_layers,
           curve_2_layers: path.curve_2_layers,
         },
@@ -194,13 +213,13 @@ where
   /// The amount of branch blinds needed on the first curve.
   pub fn necessary_c1_blinds(&self) -> usize {
     self.per_input.len() *
-      (usize::from(u8::from(self.per_input[0].1.leaves.is_some())) +
-        self.per_input[0].1.curve_1_layers.len())
+      (usize::from(u8::from(self.per_input[0].2.leaves.is_some())) +
+        self.per_input[0].2.curve_1_layers.len())
   }
 
   /// The amount of branch blinds needed on the second curve.
   pub fn necessary_c2_blinds(&self) -> usize {
-    self.per_input.len() * self.per_input[0].1.curve_2_layers.len()
+    self.per_input.len() * self.per_input[0].2.curve_2_layers.len()
   }
 
   /// Blind these branches with the specified blinds.
@@ -222,9 +241,9 @@ where
         .per_input
         .into_iter()
         .zip(output_blinds)
-        .map(|((output, branches), output_blinds)| {
+        .map(|((output, output_extra_scalars, branches), output_blinds)| {
           let input = output_blinds.blind(&output)?;
-          Ok(InputProofData { output, output_blinds, input, branches })
+          Ok(InputProofData { output, output_extra_scalars, output_blinds, input, branches })
         })
         .collect::<Result<_, FcmpError>>()?,
       root: self.root,
@@ -237,6 +256,7 @@ where
 pub(crate) struct TranscriptedBranchesPerInput {
   pub(crate) c1: Vec<Vec<Variable>>,
   pub(crate) c2: Vec<Vec<Variable>>,
+  pub(crate) extra_leaf_vars: Vec<Variable>,
 }
 
 pub(crate) struct TranscriptedBranches {
@@ -267,29 +287,37 @@ where
     c1_tape: &mut VectorCommitmentTape<<C::C1 as Ciphersuite>::F>,
     c2_tape: &mut VectorCommitmentTape<<C::C2 as Ciphersuite>::F>,
   ) -> TranscriptedBranches {
-    let flatten_leaves = |leaves: &[Output<<C::OC as Ciphersuite>::G>]| {
-      // Flatten the leaves for the branch
+    let leaf_tuple_width = C::leaf_tuple_width();
+    let leaf_layer_len = leaf_tuple_width * LAYER_ONE_LEN;
+
+    let flatten_leaves = |leaves: &[Output<<C::OC as Ciphersuite>::G>],
+                          extras: &[Vec<<C::C1 as Ciphersuite>::F>]| {
       let mut flattened_leaves = vec![];
-      for leaf in leaves {
-        // leaf is of type Output which checks its members to not be the identity
+      for (leaf, extra) in leaves.iter().zip(extras.iter()) {
         let O = <C::OC as Ciphersuite>::G::to_xy(leaf.O).unwrap();
         let I = <C::OC as Ciphersuite>::G::to_xy(leaf.I).unwrap();
-        let C = <C::OC as Ciphersuite>::G::to_xy(leaf.C).unwrap();
-        flattened_leaves.extend(&[O.0, O.1, I.0, I.1, C.0, C.1]);
+        let C_point = <C::OC as Ciphersuite>::G::to_xy(leaf.C).unwrap();
+        flattened_leaves.extend(&[O.0, I.0, C_point.0]);
+        flattened_leaves.extend(extra);
       }
-      while flattened_leaves.len() < (6 * LAYER_ONE_LEN) {
+      while flattened_leaves.len() < leaf_layer_len {
         flattened_leaves.push(<C::C1 as Ciphersuite>::F::ZERO);
       }
       flattened_leaves
     };
 
-    let mut per_input = vec![];
+    let empty_extras: Vec<Vec<<C::C1 as Ciphersuite>::F>> = Vec::new();
+
+    // Phase 1: Standard per-input branches (leaves + tree layers).
+    // These must be contiguous on the tape so known branch blinds align with commitment indices.
+    let mut per_input: Vec<(Vec<Vec<Variable>>, Vec<Vec<Variable>>)> = vec![];
     for input in &self.per_input {
       let mut c1 = vec![];
       let mut c2 = vec![];
       if let Some(leaves) = &input.branches.leaves {
-        let flattened_leaves = flatten_leaves(leaves);
-        c1.push(c1_tape.append_branch(6 * LAYER_ONE_LEN, Some(flattened_leaves)));
+        let extras = input.branches.leaves_extra_scalars.as_ref().unwrap_or(&empty_extras);
+        let flattened_leaves = flatten_leaves(leaves, extras);
+        c1.push(c1_tape.append_branch(leaf_layer_len, Some(flattened_leaves)));
       }
       for branch in &input.branches.curve_1_layers {
         let mut branch = branch.clone();
@@ -305,18 +333,35 @@ where
         }
         c2.push(c2_tape.append_branch(LAYER_TWO_LEN, Some(branch.clone())));
       }
-      per_input.push(TranscriptedBranchesPerInput { c1, c2 });
+      per_input.push((c1, c2));
     }
 
+    // Phase 2: Extra leaf scalar branches for all inputs (after standard branches).
+    let mut all_extra_leaf_vars: Vec<Vec<Variable>> = vec![];
+    for input in &self.per_input {
+      let mut extra_leaf_vars = vec![];
+      for scalar in &input.output_extra_scalars {
+        let vars = c1_tape.append_branch(1, Some(vec![*scalar]));
+        extra_leaf_vars.push(vars[0]);
+      }
+      all_extra_leaf_vars.push(extra_leaf_vars);
+    }
+
+    // Phase 3: Root branch.
     let root = match &self.root {
-      RootBranch::Leaves(leaves) => {
-        let flattened_leaves = flatten_leaves(leaves);
+      RootBranch::Leaves(leaves, extras) => {
+        let flattened_leaves = flatten_leaves(leaves, extras);
         c1_tape.append_branch(flattened_leaves.len(), Some(flattened_leaves))
       }
       RootBranch::C1(branch) => c1_tape.append_branch(branch.len(), Some(branch.clone())),
       RootBranch::C2(branch) => c2_tape.append_branch(branch.len(), Some(branch.clone())),
     };
 
+    let per_input = per_input
+      .into_iter()
+      .zip(all_extra_leaf_vars)
+      .map(|((c1, c2), extra_leaf_vars)| TranscriptedBranchesPerInput { c1, c2, extra_leaf_vars })
+      .collect();
     TranscriptedBranches { per_input, root }
   }
 
@@ -405,12 +450,11 @@ where
       };
       let C = (C[0], C[1]);
 
-      // We now have committed to O, I, C, and all interpolated points
-
       res.push(TranscriptedInput {
         O,
         I,
         C,
+        extra_leaf_vars: vec![],
         o_blind_claim,
         i_blind_u_claim,
         i_blind_v_claim,

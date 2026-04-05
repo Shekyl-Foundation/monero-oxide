@@ -65,6 +65,7 @@ impl FcmpCurves for Curves {
   type C1Parameters = SeleneParams;
   type C2 = Helios;
   type C2Parameters = HeliosParams;
+  const EXTRA_LEAF_SCALARS: usize = 1;
 }
 
 include!(concat!(env!("OUT_DIR"), "/generators.rs"));
@@ -249,16 +250,28 @@ impl FcmpPlusPlus {
     layers: usize,
     signable_tx_hash: [u8; 32],
     key_images: Vec<<Ed25519 as Ciphersuite>::G>,
+    pqc_pk_hashes: Vec<<Selene as Ciphersuite>::F>,
   ) -> Result<(), FcmpPlusPlusError> {
     if self.inputs.len() != key_images.len() {
       Err(FcmpPlusPlusError::InvalidKeyImageQuantity)?;
     }
+    if self.inputs.len() != pqc_pk_hashes.len() {
+      Err(FcmpPlusPlusError::InvalidKeyImageQuantity)?;
+    }
 
     let mut fcmp_inputs = Vec::with_capacity(self.inputs.len());
-    for ((input, spend_auth_and_linkability), key_image) in self.inputs.iter().zip(key_images) {
+    for (((input, spend_auth_and_linkability), key_image), h_pqc) in
+      self.inputs.iter().zip(key_images).zip(pqc_pk_hashes)
+    {
       spend_auth_and_linkability.verify(rng, verifier_ed, signable_tx_hash, input, key_image);
 
-      fcmp_inputs.push(fcmps::Input::new(input.O_tilde, input.I_tilde, input.R, input.C_tilde)?);
+      fcmp_inputs.push(fcmps::Input::with_extra_scalars(
+        input.O_tilde,
+        input.I_tilde,
+        input.R,
+        input.C_tilde,
+        vec![h_pqc],
+      )?);
     }
 
     Ok(self.fcmp.verify(rng, verifier_1, verifier_2, &*FCMP_PARAMS, tree, layers, &fcmp_inputs)?)

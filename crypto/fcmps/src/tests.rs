@@ -26,14 +26,15 @@ impl DiscreteLogParameter for HeliosParams {
 }
 
 #[derive(Clone)]
-struct MoneroCurves;
-impl FcmpCurves for MoneroCurves {
+struct ShekylCurves;
+impl FcmpCurves for ShekylCurves {
   type OC = Ed25519;
   type OcParameters = Ed25519Params;
   type C1 = Selene;
   type C1Parameters = SeleneParams;
   type C2 = Helios;
   type C2Parameters = HeliosParams;
+  const EXTRA_LEAF_SCALARS: usize = 1;
 }
 
 #[allow(clippy::type_complexity)]
@@ -44,14 +45,14 @@ fn random_params(
   <Ed25519 as Ciphersuite>::G,
   <Ed25519 as Ciphersuite>::G,
   <Ed25519 as Ciphersuite>::G,
-  FcmpParams<MoneroCurves>,
+  FcmpParams<ShekylCurves>,
 ) {
   let G = <Ed25519 as Ciphersuite>::G::random(&mut OsRng);
   let T = <Ed25519 as Ciphersuite>::G::random(&mut OsRng);
   let U = <Ed25519 as Ciphersuite>::G::random(&mut OsRng);
   let V = <Ed25519 as Ciphersuite>::G::random(&mut OsRng);
 
-  let params = FcmpParams::<MoneroCurves>::new(
+  let params = FcmpParams::<ShekylCurves>::new(
     generalized_bulletproofs::tests::insecure_test_generators::<_, Selene>(
       &mut OsRng,
       2 * (input_limit * 256),
@@ -62,10 +63,8 @@ fn random_params(
       2 * (input_limit * 128),
     )
     .unwrap(),
-    // Hash init generators
     <Selene as Ciphersuite>::G::random(&mut OsRng),
     <Helios as Ciphersuite>::G::random(&mut OsRng),
-    // G, T, U, V
     G,
     T,
     U,
@@ -82,33 +81,49 @@ fn random_output() -> Output<<Ed25519 as Ciphersuite>::G> {
   Output::new(O, I, C).unwrap()
 }
 
+fn random_h_pqc() -> <Selene as Ciphersuite>::F {
+  <Selene as Ciphersuite>::F::random(&mut OsRng)
+}
+
+fn flatten_output_scalars(
+  output: &Output<<Ed25519 as Ciphersuite>::G>,
+  h_pqc: &<Selene as Ciphersuite>::F,
+) -> Vec<<Selene as Ciphersuite>::F> {
+  let O = <Ed25519 as Ciphersuite>::G::to_xy(output.O).unwrap();
+  let I = <Ed25519 as Ciphersuite>::G::to_xy(output.I).unwrap();
+  let C = <Ed25519 as Ciphersuite>::G::to_xy(output.C).unwrap();
+  vec![O.0, I.0, C.0, *h_pqc]
+}
+
 fn random_path(
-  params: &FcmpParams<MoneroCurves>,
+  params: &FcmpParams<ShekylCurves>,
   layers: usize,
-) -> (Path<MoneroCurves>, TreeRoot<Selene, Helios>) {
+) -> (Path<ShekylCurves>, TreeRoot<Selene, Helios>) {
   assert!(layers >= 1);
 
   let mut leaves = vec![];
+  let mut leaves_h_pqc: Vec<<Selene as Ciphersuite>::F> = vec![];
   while leaves.len() < LAYER_ONE_LEN {
     leaves.push(random_output());
+    leaves_h_pqc.push(random_h_pqc());
   }
 
-  let output =
-    leaves[usize::try_from(OsRng.next_u64() % u64::try_from(leaves.len()).unwrap()).unwrap()];
+  let output_idx =
+    usize::try_from(OsRng.next_u64() % u64::try_from(leaves.len()).unwrap()).unwrap();
+  let output = leaves[output_idx];
+  let output_h_pqc = leaves_h_pqc[output_idx];
+
+  let leaves_extra_scalars: Vec<Vec<<Selene as Ciphersuite>::F>> =
+    leaves_h_pqc.iter().map(|h| vec![*h]).collect();
 
   let mut selene_hash = Some({
+    let mut scalars = vec![];
+    for (output, h_pqc) in leaves.iter().zip(leaves_h_pqc.iter()) {
+      scalars.extend(flatten_output_scalars(output, h_pqc));
+    }
     let mut multiexp = vec![];
-    for (scalar, point) in leaves
-      .iter()
-      .flat_map(|output| {
-        let O = <Ed25519 as Ciphersuite>::G::to_xy(output.O).unwrap();
-        let I = <Ed25519 as Ciphersuite>::G::to_xy(output.I).unwrap();
-        let C = <Ed25519 as Ciphersuite>::G::to_xy(output.C).unwrap();
-        [O.0, O.1, I.0, I.1, C.0, C.1]
-      })
-      .zip(params.curve_1_generators.g_bold_slice())
-    {
-      multiexp.push((scalar, *point));
+    for (scalar, point) in scalars.iter().zip(params.curve_1_generators.g_bold_slice()) {
+      multiexp.push((*scalar, *point));
     }
     params.curve_1_hash_init + multiexp_vartime(&multiexp)
   });
@@ -180,14 +195,24 @@ fn random_path(
     TreeRoot::<Selene, Helios>::C2(helios_hash.unwrap())
   };
 
-  (Path { output, leaves, curve_2_layers, curve_1_layers }, root)
+  (
+    Path {
+      output,
+      output_extra_scalars: vec![output_h_pqc],
+      leaves,
+      leaves_extra_scalars,
+      curve_2_layers,
+      curve_1_layers,
+    },
+    root,
+  )
 }
 
 fn random_paths(
-  params: &FcmpParams<MoneroCurves>,
+  params: &FcmpParams<ShekylCurves>,
   layers: usize,
   paths: usize,
-) -> (Vec<Path<MoneroCurves>>, TreeRoot<Selene, Helios>) {
+) -> (Vec<Path<ShekylCurves>>, TreeRoot<Selene, Helios>) {
   assert!(paths >= 1);
   assert!(paths <= LAYER_ONE_LEN.min(LAYER_TWO_LEN));
 
@@ -197,35 +222,38 @@ fn random_paths(
     res.push(path);
   }
 
-  // Pop each path's top layer
-  // Then push a new top layer which is unified for all paths
-  // 1st layer has a C1 root (so the top layer is the leaves)
-  // 2nd layer has a C2 root (so the top layer is C1)
-  // 3rd layer has a C1 root (so the top layer is C2)
   let root = if layers == 1 {
     let mut outputs = vec![];
+    let mut outputs_h_pqc = vec![];
     for path in &res {
       outputs.push(path.output);
+      outputs_h_pqc.push(path.output_extra_scalars[0]);
     }
     while outputs.len() < LAYER_ONE_LEN {
       outputs.push(random_output());
-    }
-    let mut shuffled_outputs = vec![];
-    while !outputs.is_empty() {
-      let i = usize::try_from(OsRng.next_u64() % u64::try_from(outputs.len()).unwrap()).unwrap();
-      shuffled_outputs.push(outputs.swap_remove(i));
+      outputs_h_pqc.push(random_h_pqc());
     }
 
+    let mut indices: Vec<usize> = (0 .. outputs.len()).collect();
+    let mut shuffled_outputs = vec![];
+    let mut shuffled_h_pqc = vec![];
+    while !indices.is_empty() {
+      let i = usize::try_from(OsRng.next_u64() % u64::try_from(indices.len()).unwrap()).unwrap();
+      let idx = indices.swap_remove(i);
+      shuffled_outputs.push(outputs[idx]);
+      shuffled_h_pqc.push(outputs_h_pqc[idx]);
+    }
+
+    let extra_scalars: Vec<Vec<<Selene as Ciphersuite>::F>> =
+      shuffled_h_pqc.iter().map(|h| vec![*h]).collect();
     for path in &mut res {
       path.leaves = shuffled_outputs.clone();
+      path.leaves_extra_scalars = extra_scalars.clone();
     }
 
     let mut new_leaves_layer = vec![];
-    for output in shuffled_outputs {
-      let O = <Ed25519 as Ciphersuite>::G::to_xy(output.O).unwrap();
-      let I = <Ed25519 as Ciphersuite>::G::to_xy(output.I).unwrap();
-      let C = <Ed25519 as Ciphersuite>::G::to_xy(output.C).unwrap();
-      new_leaves_layer.extend(&[O.0, O.1, I.0, I.1, C.0, C.1]);
+    for (output, h_pqc) in shuffled_outputs.iter().zip(shuffled_h_pqc.iter()) {
+      new_leaves_layer.extend(flatten_output_scalars(output, h_pqc));
     }
 
     TreeRoot::C1(
@@ -253,11 +281,12 @@ fn random_paths(
           .unwrap()
         } else {
           let mut leaves_layer = vec![];
-          for output in &path.leaves {
+          for (output, extras) in path.leaves.iter().zip(path.leaves_extra_scalars.iter()) {
             let O = <Ed25519 as Ciphersuite>::G::to_xy(output.O).unwrap();
             let I = <Ed25519 as Ciphersuite>::G::to_xy(output.I).unwrap();
             let C = <Ed25519 as Ciphersuite>::G::to_xy(output.C).unwrap();
-            leaves_layer.extend(&[O.0, O.1, I.0, I.1, C.0, C.1]);
+            leaves_layer.extend(&[O.0, I.0, C.0]);
+            leaves_layer.extend(extras);
           }
 
           hash_grow(
@@ -345,11 +374,12 @@ fn random_paths(
     assert!(path.leaves.iter().any(|output| output == &path.output));
 
     let mut leaves_layer = vec![];
-    for output in &path.leaves {
+    for (output, extras) in path.leaves.iter().zip(path.leaves_extra_scalars.iter()) {
       let O = <Ed25519 as Ciphersuite>::G::to_xy(output.O).unwrap();
       let I = <Ed25519 as Ciphersuite>::G::to_xy(output.I).unwrap();
       let C = <Ed25519 as Ciphersuite>::G::to_xy(output.C).unwrap();
-      leaves_layer.extend(&[O.0, O.1, I.0, I.1, C.0, C.1]);
+      leaves_layer.extend(&[O.0, I.0, C.0]);
+      leaves_layer.extend(extras);
     }
 
     let mut c1_hash = Some(
@@ -458,10 +488,10 @@ fn random_output_blinds(
 }
 
 fn blind_branches(
-  params: &FcmpParams<MoneroCurves>,
-  branches: Branches<MoneroCurves>,
+  params: &FcmpParams<ShekylCurves>,
+  branches: Branches<ShekylCurves>,
   output_blinds: Vec<OutputBlinds<<Ed25519 as Ciphersuite>::G>>,
-) -> BranchesWithBlinds<MoneroCurves> {
+) -> BranchesWithBlinds<ShekylCurves> {
   let branch_blinds_start = std::time::Instant::now();
   let mut branches_1_blinds = vec![];
   for _ in 0 .. branches.necessary_c1_blinds() {
@@ -492,8 +522,8 @@ fn blind_branches(
 fn verify_fn(
   iters: usize,
   batch: usize,
-  proof: &Fcmp<MoneroCurves>,
-  params: &FcmpParams<MoneroCurves>,
+  proof: &Fcmp<ShekylCurves>,
+  params: &FcmpParams<ShekylCurves>,
   root: TreeRoot<Selene, Helios>,
   layers: usize,
   inputs: &[Input<<Selene as Ciphersuite>::F>],
@@ -520,6 +550,16 @@ fn verify_fn(
   println!("Median time to verify {batch} proof(s) was {}ms (n={iters})", times[times.len() / 2]);
 }
 
+fn input_with_h_pqc(
+  output_blinds: &OutputBlinds<<Ed25519 as Ciphersuite>::G>,
+  output: &Output<<Ed25519 as Ciphersuite>::G>,
+  h_pqc: <Selene as Ciphersuite>::F,
+) -> Input<<Selene as Ciphersuite>::F> {
+  let mut input = output_blinds.blind(output).unwrap();
+  input.extra_leaf_scalars = vec![h_pqc];
+  input
+}
+
 #[test]
 fn test_single_input() {
   let (G, T, U, V, params) = random_params(1);
@@ -531,10 +571,11 @@ fn test_single_input() {
 
     let (path, root) = random_path(&params, layers);
     let output = path.output;
+    let h_pqc = path.output_extra_scalars[0];
 
     let branches = Branches::new(vec![path]).unwrap();
 
-    let input = output_blinds.blind(&output).unwrap();
+    let input = input_with_h_pqc(&output_blinds, &output, h_pqc);
 
     let proof = Fcmp::prove(
       &mut OsRng,
@@ -554,7 +595,6 @@ fn test_multiple_inputs() {
   let mut all_proofs = vec![];
 
   for paths in 2 ..= 4 {
-    // This is less than target layers yet still tests a C1 root and a C2 root
     for layers in 1 ..= 4 {
       println!("Testing a proof with {paths} inputs and {layers} layers");
 
@@ -566,8 +606,8 @@ fn test_multiple_inputs() {
       }
 
       let mut inputs = vec![];
-      for (path, output_blinds) in paths.iter().zip(&output_blinds) {
-        inputs.push(output_blinds.blind(&path.output).unwrap());
+      for (path, ob) in paths.iter().zip(&output_blinds) {
+        inputs.push(input_with_h_pqc(ob, &path.output, path.output_extra_scalars[0]));
       }
 
       let branches = Branches::new(paths).unwrap();
@@ -580,7 +620,6 @@ fn test_multiple_inputs() {
     }
   }
 
-  // Test batch verification of all of these proofs
   let mut verifier_1 = generalized_bulletproofs::Generators::batch_verifier();
   let mut verifier_2 = generalized_bulletproofs::Generators::batch_verifier();
 
@@ -607,8 +646,8 @@ fn test_malleated_proofs() {
       }
 
       let mut inputs = vec![];
-      for (path, output_blinds) in paths.iter().zip(&output_blinds) {
-        inputs.push(output_blinds.blind(&path.output).unwrap());
+      for (path, ob) in paths.iter().zip(&output_blinds) {
+        inputs.push(input_with_h_pqc(ob, &path.output, path.output_extra_scalars[0]));
       }
 
       let branches = Branches::new(paths.clone()).unwrap();
@@ -643,6 +682,34 @@ fn test_malleated_proofs() {
       }
     }
   }
+}
+
+#[test]
+fn test_wrong_h_pqc_fails() {
+  let (G, T, U, V, params) = random_params(1);
+
+  let output_blinds = random_output_blinds(G, T, U, V);
+
+  let (path, root) = random_path(&params, 1);
+  let output = path.output;
+
+  let branches = Branches::new(vec![path]).unwrap();
+
+  // Use a WRONG h_pqc value in the verifier input
+  let mut input = output_blinds.blind(&output).unwrap();
+  input.extra_leaf_scalars = vec![random_h_pqc()];
+
+  let blinded = blind_branches(&params, branches, vec![output_blinds]);
+  let proof = Fcmp::prove(&mut OsRng, &params, blinded).unwrap();
+
+  let mut verifier_1 = generalized_bulletproofs::Generators::batch_verifier();
+  let mut verifier_2 = generalized_bulletproofs::Generators::batch_verifier();
+  proof
+    .verify(&mut OsRng, &mut verifier_1, &mut verifier_2, &params, root, 1, &[input])
+    .unwrap();
+  let valid =
+    params.curve_1_generators.verify(verifier_1) && params.curve_2_generators.verify(verifier_2);
+  assert!(!valid, "proof with wrong h_pqc should not verify");
 }
 
 #[test]
@@ -697,18 +764,19 @@ fn verify_benchmark() {
 
   let (path, root) = random_path(&params, TARGET_LAYERS);
   let output = path.output;
+  let h_pqc = path.output_extra_scalars[0];
 
   let branches = Branches::new(vec![path]).unwrap();
 
   let output_blinds = random_output_blinds(G, T, U, V);
-  let input = output_blinds.blind(&output).unwrap();
+  let input = input_with_h_pqc(&output_blinds, &output, h_pqc);
 
   let proof =
     Fcmp::prove(&mut OsRng, &params, blind_branches(&params, branches, vec![output_blinds]))
       .unwrap();
 
-  verify_fn(100, 1, &proof, &params, root, TARGET_LAYERS, &[input]);
-  verify_fn(100, 10, &proof, &params, root, TARGET_LAYERS, &[input]);
+  verify_fn(100, 1, &proof, &params, root, TARGET_LAYERS, &[input.clone()]);
+  verify_fn(100, 10, &proof, &params, root, TARGET_LAYERS, &[input.clone()]);
   verify_fn(100, 100, &proof, &params, root, TARGET_LAYERS, &[input]);
 }
 
@@ -717,7 +785,7 @@ fn proof_sizes() {
   for inputs in 0 ..= 256 {
     println!(
       "Proof size for {inputs} inputs: {}",
-      Fcmp::<MoneroCurves>::proof_size(inputs, TARGET_LAYERS)
+      Fcmp::<ShekylCurves>::proof_size(inputs, TARGET_LAYERS)
     );
   }
 }
