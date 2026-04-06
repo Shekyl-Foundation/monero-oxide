@@ -55,8 +55,15 @@ shekyl-bulletproofs = { opt-level = 3 }
 shekyl-fcmp-plus-plus = { opt-level = 3 }
 shekyl-oxide = { opt-level = 3 }
 
+[profile.dev]
+panic = "abort"
+overflow-checks = true
 [profile.release]
-panic = "unwind"
+panic = "abort"
+overflow-checks = true
+[profile.test]
+overflow-checks = true
+[profile.bench]
 overflow-checks = true
 
 [workspace.lints.clippy]

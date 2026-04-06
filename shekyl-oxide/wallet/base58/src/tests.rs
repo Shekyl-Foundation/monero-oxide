@@ -33,8 +33,27 @@ fn base58() {
   let max_decoded_block = "zzzzzzzzzzz";
   assert!(decode(max_decoded_block).is_none());
 
+  // Shifts into position via checked_mul but overflows on checked_add
+  assert!(decode("jpXCZedGfVz").is_none());
+
   let full_and_partial_block = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
   encode_decode(full_and_partial_block);
+}
+
+#[test]
+fn non_canonical_encoding_rejected() {
+  // A non-canonical encoding produces a sum whose unused high bytes are non-zero,
+  // silently truncating the result. Both strings must not decode to the same value.
+  let canon = decode_check("8Tge7kr");
+  let non_canon = decode_check("dLricHU");
+  // At least one must be None, or if both decode, they must differ
+  match (canon, non_canon) {
+    (Some(a), Some(b)) => assert_ne!(a, b),
+    _ => {} // rejection is correct
+  }
+
+  // Raw decode should also reject the non-canonical form
+  assert!(decode("dLricHU").is_none());
 }
 
 #[test]
