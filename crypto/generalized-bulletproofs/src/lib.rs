@@ -323,7 +323,10 @@ impl<C: Ciphersuite> PedersenVectorCommitment<C> {
   ///
   /// This function returns `None` if the amount of generators is less than the amount of values
   /// within the relevant vector.
-  pub fn commit(&self, g_bold: &[C::G], h: C::G) -> Option<C::G> {
+  pub fn commit(&self, g_bold: &[C::G], h: C::G) -> Option<C::G>
+  where
+    C::G: ConditionallySelectable,
+  {
     if g_bold.len() < self.g_values.len() {
       None?;
     };
