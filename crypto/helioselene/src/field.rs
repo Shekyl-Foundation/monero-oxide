@@ -474,6 +474,10 @@ impl Field for HelioseleneField {
 
     #[inline(always)]
     fn step(a: &mut U256, b: &mut U256, u: &mut U256, v: &mut U256, limbs: usize) {
+      #[cfg(debug_assertions)]
+      #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
+      let a_b_bits = (a.bits() as u32) + (b.bits() as u32);
+
       let a_is_odd = a.as_limbs()[0].0 & 1;
       let a_is_odd = Limb(a_is_odd).wrapping_neg();
 
@@ -617,6 +621,12 @@ impl Field for HelioseleneField {
       a.as_limbs_mut()[limbs - 1] >>= 1;
 
       *u = u.shr_vartime(1);
+
+      debug_assert!(bool::from({
+        #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
+        let new_a_b_bits = (a.bits() as u32) + (b.bits() as u32);
+        (new_a_b_bits.ct_lt(&a_b_bits)) | a.ct_eq(&U256::ZERO)
+      }));
     }
 
     // Note the limbs still in use so we don't apply operations over unused limbs
@@ -852,4 +862,11 @@ mod tests_assuming_64_bits {
 #[test]
 fn test_helioselene_field() {
   ff_group_tests::prime_field::test_prime_field_bits::<_, HelioseleneField>(&mut rand_core::OsRng);
+}
+
+#[test]
+fn invert_3_66() {
+  let three_66 =
+    HelioseleneField::from_repr(U256::from(3u8).shl_vartime(66).to_le_bytes()).unwrap();
+  assert_eq!(three_66.invert().unwrap() * three_66, HelioseleneField::ONE);
 }
