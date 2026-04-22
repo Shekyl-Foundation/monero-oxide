@@ -473,7 +473,7 @@ impl Field for HelioseleneField {
     let mut v = U256::ZERO;
 
     #[inline(always)]
-    fn step(a: &mut U256, b: &mut U256, u: &mut U256, v: &mut U256, limbs: usize) {
+    fn step(a: &mut U256, b: &mut U256, u: &mut U256, v: &mut U256) {
       #[cfg(debug_assertions)]
       #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
       let a_b_bits = (a.bits() as u32) + (b.bits() as u32);
@@ -484,7 +484,7 @@ impl Field for HelioseleneField {
       // Calculate `a - b`, which also yields if `a < b` by if it underflows
       let mut borrow = Limb::ZERO;
       let mut a_sub_b = U256::ZERO;
-      for l in 0 .. limbs {
+      for l in 0 .. U256::LIMBS {
         (a_sub_b.as_limbs_mut()[l], borrow) =
           sub_with_bounded_overflow(a.as_limbs()[l], b.as_limbs()[l], borrow);
       }
@@ -493,23 +493,23 @@ impl Field for HelioseleneField {
       let both = a_is_odd & a_lt_b;
 
       #[inline(always)]
-      fn select(a: &U256, b: &U256, choice: Limb, limbs: usize) -> U256 {
+      fn select(a: &U256, b: &U256, choice: Limb) -> U256 {
         let mut res = U256::ZERO;
-        for l in 0 .. limbs {
+        for l in 0 .. U256::LIMBS {
           res.as_limbs_mut()[l] = select_word(a.as_limbs()[l], b.as_limbs()[l], choice);
         }
         res
       }
 
       // Set `b` to `a` (part of the swap defined on line 8 of the algorithm's description)
-      *b = select(b, a, both, limbs);
+      *b = select(b, a, both);
 
       // Negate `a_sub_b` to obtain `a_diff_b` if `a_lt_b`
       let a_diff_b = {
         // Negation is applying the logical NOT to every word while adding 1
         let mut carry = Limb::ONE & a_lt_b;
         let mut a_diff_b = U256::ZERO;
-        for l in 0 .. limbs {
+        for l in 0 .. U256::LIMBS {
           // (a ^ x) is a logical NOT if `x` is set and a NOP if `x` is 0
           let limb;
           let carry_bool;
@@ -519,7 +519,7 @@ impl Field for HelioseleneField {
         a_diff_b
       };
       // Leave `a` untouched if `a` is even, else set `a` to the difference of `a` and `b`
-      *a = select(a, &a_diff_b, a_is_odd, limbs);
+      *a = select(a, &a_diff_b, a_is_odd);
 
       /*
         The following code immediately takes the difference of `u - v`, before negating to
@@ -612,13 +612,13 @@ impl Field for HelioseleneField {
         u.as_limbs()[U256::LIMBS - 1] | (add_two_modulus << (Limb::BITS - 1));
 
       // Set `v` to the `u` from the start if `(a & 1) & (a < b)`
-      *v = select(v, &u_start, both, U256::LIMBS);
+      *v = select(v, &u_start, both);
 
       // Divide by 2
-      for l in 0 .. (limbs - 1) {
+      for l in 0 .. (U256::LIMBS - 1) {
         a.as_limbs_mut()[l] = (a.as_limbs()[l] >> 1) | (a.as_limbs()[l + 1] << (Limb::BITS - 1));
       }
-      a.as_limbs_mut()[limbs - 1] >>= 1;
+      a.as_limbs_mut()[U256::LIMBS - 1] >>= 1;
 
       *u = u.shr_vartime(1);
 
@@ -630,13 +630,13 @@ impl Field for HelioseleneField {
     }
 
     // Note the limbs still in use so we don't apply operations over unused limbs
-    for limbs in (2 ..= U256::LIMBS).rev() {
+    for _ in 2 ..= U256::LIMBS {
       for _ in 0 .. (2 * Limb::BITS) {
-        step(&mut a, &mut b, &mut u, &mut v, limbs);
+        step(&mut a, &mut b, &mut u, &mut v);
       }
     }
     for _ in 0 .. ((2 * Limb::BITS) - 2) {
-      step(&mut a, &mut b, &mut u, &mut v, 1);
+      step(&mut a, &mut b, &mut u, &mut v);
     }
 
     CtOption::new(Self(red1(v)), !self.is_zero())
