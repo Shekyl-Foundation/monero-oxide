@@ -168,11 +168,7 @@ pub(crate) fn invert(value: &HelioseleneField) -> CtOption<HelioseleneField> {
     *v = select(v, &u_start, both);
 
     // Divide by 2
-    for l in 0 .. (U256::LIMBS - 1) {
-      a.as_limbs_mut()[l] = (a.as_limbs()[l] >> 1) | (a.as_limbs()[l + 1] << (Limb::BITS - 1));
-    }
-    a.as_limbs_mut()[U256::LIMBS - 1] >>= 1;
-
+    *a = a.shr_vartime(1);
     *u = u.shr_vartime(1);
 
     debug_assert!(bool::from({
