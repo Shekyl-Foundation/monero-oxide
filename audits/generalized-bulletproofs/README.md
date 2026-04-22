@@ -36,7 +36,13 @@ option. Aaron Goodell was contracted via Cypher Stack to perform the audit of
 the implementation, yielding [this audit](./Audit.pdf), yet also
 [updated security proofs](./Updated Security Proofs.pdf).
 
+Unfortunately, the protocol had a flaw found in it by Brandon Goodell, while a
+researcher at Cypher Stack, who proceeded to publish a
+[drafted fix](https://github.com/cypherstack/generalized-bulletproofs-fix).
+This is the version currently in use which has not been audited.
+
 For provenance, please see the following links.
 - https://github.com/cypherstack/generalized-bulletproofs/releases
 - https://repo.getmonero.org/monero-project/ccs-proposals/-/merge_requests/449#note_27508
 - https://github.com/cypherstack/generalized-bulletproofs-code/releases
+- https://github.com/cypherstack/generalized-bulletproofs-fix

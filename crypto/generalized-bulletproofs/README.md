@@ -14,8 +14,8 @@ for the monero-oxide Git repository's commit
 
 ### 'Fixed'
 
-[This repository](https://github.com/cypherstack/generalized-bulletproofs-fix)
-contains notes on a flaw within the Generalized Bulletproofs protocol,
-modifying the indexes in response. This library adopts the changes to indexing
-as described in that paper. These changes occured after the aforementioned
-audit.
+[Cypher Stack posted about a flaw in Generalized Bulletproofs protocol](
+  https://github.com/cypherstack/generalized-bulletproofs-fix
+) and published a new definition which modified the indexes in response. This
+library adopts the changes to indexing as described in that paper. These
+changes occurred after the aforementioned audit.

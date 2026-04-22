@@ -285,7 +285,7 @@ where
       let ni = 2 + (2 * c1_commitments);
       let l_r_poly_len = 1 + ni + 1;
       let t_poly_len = (2 * l_r_poly_len) - 1;
-      let t_commitments = t_poly_len - 1;
+      let t_commitments = t_poly_len - (ni / 2) - 1;
       proof_elements += c1_commitments + t_commitments;
     }
 
@@ -294,7 +294,7 @@ where
       let ni = 2 + (2 * c2_commitments);
       let l_r_poly_len = 1 + ni + 1;
       let t_poly_len = (2 * l_r_poly_len) - 1;
-      let t_commitments = t_poly_len - 1;
+      let t_commitments = t_poly_len - (ni / 2) - 1;
       proof_elements += c2_commitments + t_commitments;
     }
 
