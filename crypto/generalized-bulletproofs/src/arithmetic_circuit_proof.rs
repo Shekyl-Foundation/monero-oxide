@@ -488,15 +488,15 @@ where
     // Multiply `l` and `r` to obtain `t`
     let mut t = ScalarVector::<C::F>::new(1 + (2 * (l.len() - 1)));
     for (i, l) in l.iter().enumerate() {
-      for (j, r) in r.iter().enumerate() {
-        if (i + j) < (ni / 2) {
-          // This is guaranteed due to how these elements of `l` aren't populated by the indexing
-          #[cfg(debug_assertions)]
-          for coeff in &l.0 {
-            debug_assert_eq!(coeff, &C::F::ZERO);
-          }
-          continue;
+      if i < (ni / 2) {
+        // This is guaranteed due to how these elements of `l` aren't populated by the indexing
+        #[cfg(debug_assertions)]
+        for coeff in &l.0 {
+          debug_assert_eq!(coeff, &C::F::ZERO);
         }
+        continue;
+      }
+      for (j, r) in r.iter().enumerate() {
         t[i + j] += l.inner_product_without_length_checks(r.0.iter());
       }
     }
