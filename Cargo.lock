@@ -1284,22 +1284,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shekyl-address"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "hex-literal",
- "rand_core",
- "serde",
- "serde_json",
- "shekyl-base58",
- "shekyl-io",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "shekyl-base58"
 version = "0.1.0"
 dependencies = [
@@ -1394,6 +1378,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "shekyl-oxide-address"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "hex-literal",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "shekyl-base58",
+ "shekyl-io",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "shekyl-oxide-no-std-tests"
 version = "0.1.0"
 dependencies = [
@@ -1437,8 +1437,8 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
- "shekyl-address",
  "shekyl-oxide",
+ "shekyl-oxide-address",
  "std-shims",
  "thiserror",
  "zeroize",
@@ -1450,7 +1450,7 @@ version = "0.1.0"
 dependencies = [
  "digest_auth",
  "hex",
- "shekyl-address",
+ "shekyl-oxide-address",
  "shekyl-rpc",
  "simple-request",
  "tokio",
@@ -1471,8 +1471,8 @@ dependencies = [
  "rand_distr",
  "serde",
  "serde_json",
- "shekyl-address",
  "shekyl-oxide",
+ "shekyl-oxide-address",
  "shekyl-rpc",
  "shekyl-simple-request-rpc",
  "std-shims",

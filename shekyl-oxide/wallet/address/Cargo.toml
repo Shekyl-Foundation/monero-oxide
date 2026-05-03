@@ -1,7 +1,13 @@
 [package]
-name = "shekyl-address"
+# Renamed from `shekyl-address` to `shekyl-oxide-address` to avoid a
+# package-name collision with downstream consumers (notably `shekyl-core`)
+# that maintain their own first-party `shekyl-address` crate for Bech32m,
+# network-aware Shekyl addresses. This crate implements the CryptoNote-style
+# legacy/integrated address codec inherited from monero-serai and consumed
+# by the fork's `shekyl-rpc` and standalone `shekyl-wallet` crates.
+name = "shekyl-oxide-address"
 version = "0.1.0"
-description = "Rust implementation of Shekyl addresses"
+description = "CryptoNote-style legacy address codec for monero-oxide consumers"
 license = "MIT"
 repository = "https://github.com/Shekyl-Foundation/shekyl-oxide/tree/main/shekyl-oxide/wallet/address"
 authors = ["Luke Parker <lukeparker5132@gmail.com>", "Shekyl Foundation <dev@shekyl.org>"]
