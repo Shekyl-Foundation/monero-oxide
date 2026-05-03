@@ -64,7 +64,11 @@ impl SharedKeyDerivations {
         Input::Gen(height) => {
           write_varint(height, &mut u).expect("write failed but <Vec as io::Write> doesn't fail");
         }
-        Input::ToKey { key_image, .. } => u.extend(key_image.to_bytes()),
+        // StakeClaim carries a key image (linking tag) just like ToKey; treat identically
+        // for uniqueness derivation.
+        Input::ToKey { key_image, .. } | Input::StakeClaim { key_image, .. } => {
+          u.extend(key_image.to_bytes())
+        }
       }
     }
     keccak256(u)
@@ -137,6 +141,13 @@ impl SharedKeyDerivations {
     (amount ^ u64::from_le_bytes(amount_mask_8)).to_le_bytes()
   }
 
+  /// Decrypt the encrypted amount and produce a commitment for it.
+  ///
+  /// The fork's wallet has no PQC layer, so it does not verify `enc_amount.amount_tag`
+  /// against an HKDF-derived expected value — the tag is carried through the codec but
+  /// not checked here. Shekyl's verifier (`shekyl-crypto-pq::output::scan_output` in
+  /// `shekyl-core`) does verify the tag, returning `CryptoError::DecapsulationFailed` on
+  /// mismatch. See `EncryptedAmount`'s struct-level docs in `fcmp.rs`.
   fn decrypt(&self, enc_amount: &EncryptedAmount) -> Commitment {
     Commitment::new(
       self.commitment_mask(),

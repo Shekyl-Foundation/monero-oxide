@@ -33,10 +33,13 @@ impl SignableTransaction {
     for (payment, shared_key_derivations) in self.payments.iter().zip(&shared_key_derivations) {
       let key =
         (&shared_key_derivations.shared_key * ED25519_BASEPOINT_TABLE) + payment.address().spend();
+      // The fork's wallet does not construct staked outputs (no PQC/staking layer);
+      // staking metadata always None here. Shekyl-core constructs txout_to_staked_key.
       res.push(Output {
         key: CompressedPoint::from(key.compress()),
         amount: None,
         view_tag: Some(shared_key_derivations.view_tag),
+        staking: None,
       });
     }
     res
@@ -98,7 +101,9 @@ impl SignableTransaction {
       let mut encrypted_amounts = Vec::with_capacity(self.payments.len());
       let mut commitments = Vec::with_capacity(self.payments.len());
       for _ in &self.payments {
-        encrypted_amounts.push(EncryptedAmount { amount: [0; 8] });
+        // amount_tag is a placeholder here (fork wallet has no PQC layer); Shekyl-consensus
+        // values are produced by shekyl-crypto-pq in shekyl-core. See EncryptedAmount docs.
+        encrypted_amounts.push(EncryptedAmount { amount: [0; 8], amount_tag: 0 });
         commitments.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
       }
 
