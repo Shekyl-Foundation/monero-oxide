@@ -81,7 +81,7 @@ fn fcmp_pp_proofs_round_trip() {
   let proofs = Proofs {
     base: ProofBase {
       fee: 1_000_000,
-      encrypted_amounts: vec![EncryptedAmount { amount: [1; 8] }],
+      encrypted_amounts: vec![EncryptedAmount { amount: [1; 8], amount_tag: 0xA1 }],
       commitments: vec![dummy_compressed_point()],
     },
     prunable: PrunableProof {
@@ -123,7 +123,7 @@ fn fcmp_pp_transaction_round_trip() {
     proofs: Some(Proofs {
       base: ProofBase {
         fee: 500_000,
-        encrypted_amounts: vec![EncryptedAmount { amount: [7; 8] }],
+        encrypted_amounts: vec![EncryptedAmount { amount: [7; 8], amount_tag: 0xB2 }],
         commitments: vec![dummy_compressed_point()],
       },
       prunable: PrunableProof {

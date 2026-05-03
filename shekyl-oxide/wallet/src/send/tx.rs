@@ -98,7 +98,9 @@ impl SignableTransaction {
       let mut encrypted_amounts = Vec::with_capacity(self.payments.len());
       let mut commitments = Vec::with_capacity(self.payments.len());
       for _ in &self.payments {
-        encrypted_amounts.push(EncryptedAmount { amount: [0; 8] });
+        // amount_tag is a placeholder here (fork wallet has no PQC layer); Shekyl-consensus
+        // values are produced by shekyl-crypto-pq in shekyl-core. See EncryptedAmount docs.
+        encrypted_amounts.push(EncryptedAmount { amount: [0; 8], amount_tag: 0 });
         commitments.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
       }
 

@@ -278,8 +278,11 @@ impl SignableTransaction {
         }
       };
       let commitment = Commitment::new(shared_key_derivations.commitment_mask(), amount);
+      // amount_tag is a placeholder here (fork wallet has no PQC layer); Shekyl-consensus
+      // values are produced by shekyl-crypto-pq in shekyl-core. See EncryptedAmount docs.
       let encrypted_amount = EncryptedAmount {
         amount: shared_key_derivations.compact_amount_encryption(amount),
+        amount_tag: 0,
       };
       res.push((commitment, encrypted_amount));
     }
