@@ -86,7 +86,7 @@ impl Eventuality {
       .iter()
       .map(|input| match input {
         Input::Gen(_) => Err(()),
-        Input::ToKey { key_image, .. } => Ok(*key_image),
+        Input::ToKey { key_image, .. } | Input::StakeClaim { key_image, .. } => Ok(*key_image),
       })
       .collect::<Result<Vec<_>, _>>()
     else {

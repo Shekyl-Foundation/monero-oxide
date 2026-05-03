@@ -64,7 +64,11 @@ impl SharedKeyDerivations {
         Input::Gen(height) => {
           write_varint(height, &mut u).expect("write failed but <Vec as io::Write> doesn't fail");
         }
-        Input::ToKey { key_image, .. } => u.extend(key_image.to_bytes()),
+        // StakeClaim carries a key image (linking tag) just like ToKey; treat identically
+        // for uniqueness derivation.
+        Input::ToKey { key_image, .. } | Input::StakeClaim { key_image, .. } => {
+          u.extend(key_image.to_bytes())
+        }
       }
     }
     keccak256(u)

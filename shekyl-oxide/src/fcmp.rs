@@ -12,7 +12,13 @@ use crate::{io::*, fcmp::bulletproofs::Bulletproof};
 /// Upper bound on serialized FCMP++ proof size (bounded by max transaction size).
 const MAX_FCMP_PROOF_SIZE: usize = 1_000_000;
 
-/// Upper bound on a single PQC auth signature blob (ML-DSA-65 signatures are ~3309 bytes).
+/// Upper bound on a single PQC auth signature blob.
+///
+/// Sized to fit ML-DSA-65 signatures (3309 bytes) with ~787 bytes of headroom for any
+/// future scheme migration (e.g., ML-DSA-87) or ASN.1 wrapper overhead, while still
+/// providing a tight DoS bound during deserialization. Future contributors: do not
+/// "optimize" this constant downward without re-reading the spec — the headroom is
+/// deliberate. A value < 3309 would reject valid ML-DSA-65 signatures.
 const MAX_PQC_AUTH_SIZE: usize = 4096;
 
 /// An encrypted amount (9 bytes: 8 XOR-encrypted amount + 1 HKDF-derived AAD tag).
