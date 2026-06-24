@@ -37,6 +37,16 @@ pub trait FcmpCurves {
   type C2: Ciphersuite;
   /// The Discrete-Log gadget parameters for the curve of the second set of branches.
   type C2Parameters: DiscreteLogParameters;
+
+  /// Additional scalars per leaf beyond the 3 point x-coordinates (O.x, I.x, C.x).
+  ///
+  /// Shekyl uses 1 extra scalar: H(pqc_pk), giving a 4-scalar leaf.
+  const EXTRA_LEAF_SCALARS: usize = 1;
+
+  /// Total scalars per output in the leaf layer: 3 base x-coordinates + extras.
+  fn leaf_tuple_width() -> usize {
+    3 + Self::EXTRA_LEAF_SCALARS
+  }
 }
 
 /// A struct representing a circuit.
@@ -106,6 +116,9 @@ where
     c_blind: PointWithDlog<Parameters>,
     C: (Variable, Variable),
 
+    extra_leaf_vars: Vec<Variable>,
+    extra_leaf_public_values: Vec<C::F>,
+
     branch: Vec<Vec<Variable>>,
   ) {
     let (challenge, challenged_generators) =
@@ -120,14 +133,6 @@ where
     let o_blind = self.discrete_log(curve, o_blind, &challenge, &challenged_T);
     self.incomplete_add_pub(O_tilde, o_blind, O);
 
-    // This cannot simply be removed in order to cheat this proof
-    // The discrete logarithms we assert equal are actually asserting the variables we use to refer
-    // to the discrete logarithms are equal
-    // If a dishonest prover removes this assertion and passes two different sets of variables,
-    // they'll generate a different circuit
-    // An honest verifier will generate the intended circuit (using a consistent set of variables)
-    // and still reject such proofs
-    // This check only exists for sanity/safety to ensure an honest verifier doesn't mis-call this
     assert_eq!(
       i_blind_u.dlog, i_blind_v.dlog,
       "first layer passed differing variables for the dlog"
@@ -145,7 +150,22 @@ where
     let c_blind = self.discrete_log(curve, c_blind, &challenge, &challenged_G);
     self.incomplete_add_pub(C_tilde, c_blind, C);
 
-    self.tuple_member_of_list(transcript, vec![O.x(), O.y(), I.x(), I.y(), C.x(), C.y()], branch);
+    // Constrain each extra leaf scalar to equal its public value (e.g. H(pqc_pk))
+    assert_eq!(
+      extra_leaf_vars.len(),
+      extra_leaf_public_values.len(),
+      "extra_leaf_vars and extra_leaf_public_values must have equal length"
+    );
+    for (var, public_val) in extra_leaf_vars.iter().zip(extra_leaf_public_values.iter()) {
+      self.constrain_equal_to_zero(
+        LinComb::from(*var) - &LinComb::empty().constant(*public_val),
+      );
+    }
+
+    // Membership tuple: x-coordinates of O, I, C plus any extra leaf scalars
+    let mut member = vec![O.x(), I.x(), C.x()];
+    member.extend(extra_leaf_vars.iter().cloned());
+    self.tuple_member_of_list(transcript, member, branch);
   }
 
   pub(crate) fn additional_layer_discrete_log_challenge<
