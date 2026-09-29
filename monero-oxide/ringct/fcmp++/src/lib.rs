@@ -70,6 +70,8 @@ impl FcmpCurves for Curves {
   type C1Parameters = SeleneParams;
   type C2 = Helios;
   type C2Parameters = HeliosParams;
+  /// A Monero leaf is the three x-coordinates alone.
+  const EXTRA_LEAF_SCALARS: usize = 0;
 }
 
 include!(concat!(env!("OUT_DIR"), "/generators.rs"));
