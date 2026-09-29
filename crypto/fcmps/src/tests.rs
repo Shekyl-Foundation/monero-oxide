@@ -559,7 +559,7 @@ fn input_with_h_pqc(
   h_pqc: <Selene as Ciphersuite>::F,
 ) -> Input<<Selene as Ciphersuite>::F> {
   let mut input = output_blinds.blind(output).unwrap();
-  input.extra_leaf_scalars = vec![h_pqc];
+  input.set_extra_leaf_scalars(vec![h_pqc]);
   input
 }
 
@@ -700,16 +700,14 @@ fn test_wrong_h_pqc_fails() {
 
   // Use a WRONG h_pqc value in the verifier input
   let mut input = output_blinds.blind(&output).unwrap();
-  input.extra_leaf_scalars = vec![random_h_pqc()];
+  input.set_extra_leaf_scalars(vec![random_h_pqc()]);
 
   let blinded = blind_branches(&params, branches, vec![output_blinds]);
   let proof = Fcmp::prove(&mut OsRng, &params, blinded).unwrap();
 
   let mut verifier_1 = generalized_bulletproofs::Generators::batch_verifier();
   let mut verifier_2 = generalized_bulletproofs::Generators::batch_verifier();
-  proof
-    .verify(&mut OsRng, &mut verifier_1, &mut verifier_2, &params, root, 1, &[input])
-    .unwrap();
+  proof.verify(&mut OsRng, &mut verifier_1, &mut verifier_2, &params, root, 1, &[input]).unwrap();
   let valid =
     params.curve_1_generators.verify(verifier_1) && params.curve_2_generators.verify(verifier_2);
   assert!(!valid, "proof with wrong h_pqc should not verify");
@@ -778,8 +776,8 @@ fn verify_benchmark() {
     Fcmp::prove(&mut OsRng, &params, blind_branches(&params, branches, vec![output_blinds]))
       .unwrap();
 
-  verify_fn(100, 1, &proof, &params, root, TARGET_LAYERS, &[input.clone()]);
-  verify_fn(100, 10, &proof, &params, root, TARGET_LAYERS, &[input.clone()]);
+  verify_fn(100, 1, &proof, &params, root, TARGET_LAYERS, core::slice::from_ref(&input));
+  verify_fn(100, 10, &proof, &params, root, TARGET_LAYERS, core::slice::from_ref(&input));
   verify_fn(100, 100, &proof, &params, root, TARGET_LAYERS, &[input]);
 }
 

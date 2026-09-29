@@ -61,7 +61,14 @@ fn test() {
         ),
     );
 
-    let path = Path { output, leaves, curve_2_layers: vec![], curve_1_layers: vec![] };
+    let path = Path {
+      output,
+      output_extra_scalars: vec![],
+      leaves,
+      leaves_extra_scalars: vec![],
+      curve_2_layers: vec![],
+      curve_1_layers: vec![],
+    };
 
     let branches = Branches::new(vec![path]).unwrap();
 
