@@ -53,7 +53,7 @@ jobs:
 
       - name: Install cargo deny
         shell: bash
-        run: cargo +1.94.1 install cargo-deny --version =0.19.0
+        run: cargo +1.94.1 install cargo-deny --version =0.19.0 --locked
 
       - name: Run cargo deny
         shell: bash
