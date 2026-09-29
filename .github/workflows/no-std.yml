@@ -47,7 +47,7 @@ jobs:
             brew install riscv-tools
           elif [ "$RUNNER_OS" = "Windows" ]; then
             /C/msys64/usr/bin/pacman.exe -Syu --noconfirm
-            /C/msys64/usr/bin/pacman.exe -S --noconfirm mingw-w64-x86_64-riscv32-unknown-elf-gcc
+            /C/msys64/usr/bin/pacman.exe -S --noconfirm mingw-w64-clang-x86_64-riscv32-unknown-elf-gcc
           fi
 
       - name: Verify no-std builds
@@ -58,7 +58,7 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then
             export CFLAGS=-I/usr/include
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            export PATH="$PATH:/C/msys64/mingw64/bin"
+            export PATH="$PATH:/C/msys64/clang64/bin"
           fi
 
           cargo +${{ steps.nightly.outputs.version }} build --target riscv32imac-unknown-none-elf -Z build-std=core -p monero-oxide-no-std-tests

@@ -10,7 +10,7 @@ use generalized_bulletproofs::{
   PedersenCommitment, PedersenVectorCommitment, Generators,
   transcript::*,
   arithmetic_circuit_proof::{
-    Variable, LinComb, ArithmeticCircuitStatement, ArithmeticCircuitWitness,
+    AcStatementError, Variable, LinComb, ArithmeticCircuitStatement, ArithmeticCircuitWitness,
   },
   tests::insecure_test_generators,
 };
@@ -220,4 +220,33 @@ fn fuzz_test_arithmetic_circuit() {
     statement.verify(&mut OsRng, &mut verifier, &mut transcript).unwrap();
     assert!(generators.verify(verifier));
   }
+}
+
+#[test]
+fn an_unconstrained_commitment_is_rejected() {
+  let generators = insecure_test_generators(&mut OsRng, 1).unwrap();
+  let mut transcript = Transcript::new([0; 32]);
+  let commitments = transcript.write_commitments(vec![], vec![generators.h()]);
+  let err = ArithmeticCircuitStatement::<Ristretto>::new(
+    generators.reduce(1).unwrap(),
+    vec![],
+    commitments,
+  )
+  .unwrap_err();
+  assert_eq!(err, AcStatementError::DidNotConstrainCommitment);
+}
+
+#[test]
+fn a_commitment_mixed_with_another_is_not_individually_constrained() {
+  let generators = insecure_test_generators(&mut OsRng, 1).unwrap();
+  let mut transcript = Transcript::new([0; 32]);
+  let commitments = transcript.write_commitments(vec![], vec![generators.g(), generators.h()]);
+  let one = <Ristretto as Ciphersuite>::F::ONE;
+  let err = ArithmeticCircuitStatement::<Ristretto>::new(
+    generators.reduce(1).unwrap(),
+    vec![LinComb::empty().term(one, Variable::V(0)).term(one, Variable::V(1))],
+    commitments,
+  )
+  .unwrap_err();
+  assert_eq!(err, AcStatementError::DidNotConstrainCommitment);
 }
