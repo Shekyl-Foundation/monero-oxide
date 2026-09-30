@@ -44,16 +44,14 @@ fn test() {
   let (tree, fcmp) = {
     let leaves = vec![output];
 
+    // The leaf is the x-coordinate of each point; the circuit proves membership of that tuple.
     let tree = TreeRoot::<Selene, Helios>::C1(
       *SELENE_HASH_INIT +
         multiexp_vartime(
           &([
             <Ed25519 as Ciphersuite>::G::to_xy(output.O()).unwrap().0,
-            <Ed25519 as Ciphersuite>::G::to_xy(output.O()).unwrap().1,
             <Ed25519 as Ciphersuite>::G::to_xy(output.I()).unwrap().0,
-            <Ed25519 as Ciphersuite>::G::to_xy(output.I()).unwrap().1,
             <Ed25519 as Ciphersuite>::G::to_xy(output.C()).unwrap().0,
-            <Ed25519 as Ciphersuite>::G::to_xy(output.C()).unwrap().1,
           ]
           .into_iter()
           .zip(SELENE_FCMP_GENERATORS.generators.g_bold_slice().iter().copied())
@@ -61,7 +59,16 @@ fn test() {
         ),
     );
 
-    let path = Path { output, leaves, curve_2_layers: vec![], curve_1_layers: vec![] };
+    // One extra-scalar list per leaf, each empty: Curves declares no extra leaf scalars.
+    let leaves_extra_scalars = vec![vec![]; leaves.len()];
+    let path = Path {
+      output,
+      output_extra_scalars: vec![],
+      leaves,
+      leaves_extra_scalars,
+      curve_2_layers: vec![],
+      curve_1_layers: vec![],
+    };
 
     let branches = Branches::new(vec![path]).unwrap();
 

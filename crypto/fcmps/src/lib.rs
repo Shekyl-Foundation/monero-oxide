@@ -107,7 +107,7 @@ pub struct Input<F: PrimeField> {
   C_tilde: (F, F),
   /// Public values for extra leaf scalars (e.g. `[H(pqc_pk)]` for Shekyl).
   /// Empty for the upstream 3-scalar leaf format.
-  pub extra_leaf_scalars: Vec<F>,
+  extra_leaf_scalars: Vec<F>,
 }
 
 impl<F: PrimeField> Input<F> {
@@ -142,6 +142,11 @@ impl<F: PrimeField> Input<F> {
       C_tilde: G::to_xy(C_tilde).ok_or(FcmpError::IdentityPoint)?,
       extra_leaf_scalars,
     })
+  }
+
+  /// Replace the extra leaf scalars on an already-built input.
+  pub fn set_extra_leaf_scalars(&mut self, extra_leaf_scalars: Vec<F>) {
+    self.extra_leaf_scalars = extra_leaf_scalars;
   }
 }
 
@@ -429,8 +434,8 @@ where
       opening.c_blind_claim,
       opening.C,
       //
-      opening.extra_leaf_vars.clone(),
-      input.extra_leaf_scalars.clone(),
+      &opening.extra_leaf_vars,
+      &input.extra_leaf_scalars,
       //
       // If the leaves are the only layer, the root branch is the leaves
       // Else, the first C1 branch is the leaves
@@ -652,8 +657,7 @@ where
     let root_blind_R: [u8; 32];
     let extra_c1_branch_count = branches.per_input.len() * C::EXTRA_LEAF_SCALARS;
     if matches!(tree, TreeRoot::C1(_)) {
-      root_blind_C1 =
-        Some(pvc_blinds_1[branches.branches_1_blinds.len() + extra_c1_branch_count]);
+      root_blind_C1 = Some(pvc_blinds_1[branches.branches_1_blinds.len() + extra_c1_branch_count]);
       let root_blind_r = Zeroizing::new(<C::C1 as Ciphersuite>::F::random(&mut *rng));
       root_blind_R = (params.curve_1_generators.h() * *root_blind_r).to_bytes();
       root_blind_r_C1 = Some(root_blind_r);
@@ -733,7 +737,7 @@ where
     {
       transcripted_input.extra_leaf_vars = transcripted_branch.extra_leaf_vars;
       let mut fcmp_input = input.input.clone();
-      fcmp_input.extra_leaf_scalars = input.output_extra_scalars.clone();
+      fcmp_input.extra_leaf_scalars.clone_from(&input.output_extra_scalars);
       Self::input(
         params,
         transcripted_branch.c1.len() + transcripted_branch.c2.len() + 1,
@@ -829,9 +833,8 @@ where
     for _ in inputs {
       for i in 0 .. (layers - 1) {
         if (i % 2) == 0 {
-          c1_branches.push(
-            c1_tape.append_branch(if i == 0 { leaf_layer_len } else { LAYER_ONE_LEN }, None),
-          );
+          c1_branches
+            .push(c1_tape.append_branch(if i == 0 { leaf_layer_len } else { LAYER_ONE_LEN }, None));
         } else {
           c2_branches.push(c2_tape.append_branch(LAYER_TWO_LEN, None));
         }

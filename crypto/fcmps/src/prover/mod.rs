@@ -310,7 +310,8 @@ where
 
     // Phase 1: Standard per-input branches (leaves + tree layers).
     // These must be contiguous on the tape so known branch blinds align with commitment indices.
-    let mut per_input: Vec<(Vec<Vec<Variable>>, Vec<Vec<Variable>>)> = vec![];
+    type BranchPair = (Vec<Vec<Variable>>, Vec<Vec<Variable>>);
+    let mut per_input: Vec<BranchPair> = vec![];
     for input in &self.per_input {
       let mut c1 = vec![];
       let mut c2 = vec![];
