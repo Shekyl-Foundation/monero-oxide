@@ -1,4 +1,4 @@
 [toolchain]
-channel = "1.89"
+channel = "1.89o each agent, and I suspect it has been omitted from some of the briefs."
 profile = "minimal"
 components = ["rustfmt", "clippy"]
