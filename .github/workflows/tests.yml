@@ -1,4 +1,8 @@
-name: Monero Tests
+name: Crypto Tests
+
+# Shekyl vendors only `crypto/` from this fork. The Monero wallet and RPC
+# crates stay in the tree as cherry-pick context and are compiled by the
+# clippy gate; their tests against a live `monerod` prove nothing Shekyl ships.
 
 on:
   push:
@@ -8,62 +12,45 @@ on:
     paths:
       - "crypto/**"
       - "monero-oxide/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/tests.yml"
 
   pull_request:
     paths:
       - "crypto/**"
       - "monero-oxide/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/tests.yml"
 
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  # Only run these once since they will be consistent regardless of any node
-  unit-tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-26-intel, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  crypto-tests:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # 6.0.0
 
-      - name: Test Dependencies
-        uses: ./.github/actions/test-dependencies
+      - name: Build Dependencies
+        uses: ./.github/actions/build-dependencies
 
-      - name: Run Unit Tests With and Without `--all-features`
+      # `--all-features` is what enables the feature-gated test targets:
+      # `generalized-bulletproofs/tests` (the statement and inner-product gates)
+      # and `ec-divisors/ed25519` (the ed-to-Wei vectors). The pure-Rust crypto
+      # has no platform-specific code, so one OS is the whole matrix.
+      - name: Test the vendored crypto and its one Monero-side consumer
         shell: bash
         run: |
-          # Remove `monero-oxide-verify-chain` which isn't a lib and can't be tested as a lib
-          find . -mindepth 2 -type f -name "Cargo.toml" | grep -v "verify-chain" | while IFS="\n" read -r toml; do
-            GITHUB_CI=true RUST_BACKTRACE=1 cargo test --manifest-path $toml --lib
-            GITHUB_CI=true RUST_BACKTRACE=1 cargo test --manifest-path $toml --lib --all-features
-          done
-
-  integration-tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-26-intel, macos-latest, windows-latest]
-        # Test against all supported protocol versions
-        version: [v0.17.3.2, v0.18.4.4]
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # 6.0.0
-
-      - name: Test Dependencies
-        uses: ./.github/actions/test-dependencies
-        with:
-          monero-version: ${{ matrix.version }}
-
-      - name: Run Integration Tests
-        shell: bash
-        run: |
-          GITHUB_CI=true RUST_BACKTRACE=1 cargo test --package monero-oxide --test '*'
-          GITHUB_CI=true RUST_BACKTRACE=1 cargo test --package monero-simple-request-rpc --test '*'
-          GITHUB_CI=true RUST_BACKTRACE=1 cargo test --package monero-wallet --test '*'
-
-      - name: Run Integration Tests With All Features
-        shell: bash
-        run: |
-          GITHUB_CI=true RUST_BACKTRACE=1 cargo test --package monero-oxide --all-features --test '*'
-          GITHUB_CI=true RUST_BACKTRACE=1 cargo test --package monero-simple-request-rpc --all-features --test '*'
-          GITHUB_CI=true RUST_BACKTRACE=1 cargo test --package monero-wallet --all-features --test '*'
+          RUST_BACKTRACE=1 cargo test --locked --all-features \
+            -p helioselene \
+            -p ec-divisors \
+            -p generalized-bulletproofs \
+            -p generalized-bulletproofs-circuit-abstraction \
+            -p generalized-bulletproofs-ec-gadgets \
+            -p full-chain-membership-proofs \
+            -p monero-fcmp-plus-plus
