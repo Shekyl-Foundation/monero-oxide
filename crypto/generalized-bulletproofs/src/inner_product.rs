@@ -124,29 +124,18 @@ where
     // `else: (n > 1)` case, lines 18-35 of the Bulletproofs paper
     // This interprets `g_bold.len()` as `n`
     while g_bold.len() > 1 {
-      // Split a, b, g_bold, h_bold as needed for lines 20-24
-      let split_at = a.len().next_power_of_two() / 2;
-      let (a1, a2) = a.split(split_at);
-      let (b1, b2) = b.split(split_at);
+      // Split a, b, g_bold, h_bold in half for lines 20-24. Every vector shares the generators'
+      // power-of-two length, so the halves are equal and fold element by element.
+      let half = a.len() / 2;
+      let (a1, a2) = a.split(half);
+      let (b1, b2) = b.split(half);
 
       let (g_bold1, g_bold2) = g_bold.split();
       let (h_bold1, h_bold2) = h_bold.split();
 
-      let n_hat = g_bold1.len();
-
-      // Sanity
-      debug_assert_eq!(a1.len(), n_hat);
-      debug_assert!(a2.len() <= n_hat);
-      debug_assert_eq!(b1.len(), n_hat);
-      debug_assert!(b2.len() <= n_hat);
-      debug_assert_eq!(g_bold1.len(), n_hat);
-      debug_assert_eq!(g_bold2.len(), n_hat);
-      debug_assert_eq!(h_bold1.len(), n_hat);
-      debug_assert_eq!(h_bold2.len(), n_hat);
-
       // cl, cr, lines 21-22
-      let cl = b2.inner_product_without_length_checks(a1.0.iter());
-      let cr = a2.inner_product_without_length_checks(b1.0.iter());
+      let cl = b2.inner_product(a1.0.iter());
+      let cr = a2.inner_product(b1.0.iter());
 
       let L = {
         let mut L_terms = Vec::with_capacity(1 + (2 * g_bold1.len()));

@@ -521,7 +521,7 @@ where
         continue;
       }
       for (j, r) in r.iter().enumerate() {
-        t[i + j] += l.inner_product_without_length_checks(r.0.iter());
+        t[i + j] += l.inner_product_zero_extended(r.0.iter());
       }
     }
 

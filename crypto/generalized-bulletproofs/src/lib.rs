@@ -16,6 +16,8 @@ use ciphersuite::{
   Ciphersuite,
 };
 
+mod zip_exact;
+pub(crate) use zip_exact::zip_exact;
 mod scalar_vector;
 pub(crate) use scalar_vector::ScalarVector;
 mod point_vector;
