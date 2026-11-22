@@ -7,7 +7,7 @@ use rand_core::{RngCore, CryptoRng};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use subtle::ConditionallySelectable;
 
-use multiexp::{multiexp, multiexp_vartime};
+use multiexp::multiexp;
 use ciphersuite::{
   group::ff::{Field as _, FromUniformBytes},
   Ciphersuite,
@@ -18,7 +18,7 @@ use crate::{
   BatchVerifier,
   transcript::*,
   lincomb::accumulate_vector,
-  inner_product::{IpProveError, IpVerifyError, IpStatement, IpWitness, P},
+  inner_product::{IpVerifyError, IpStatement, IpWitness},
 };
 pub use crate::lincomb::{Variable, LinComb};
 
@@ -601,35 +601,18 @@ where
     transcript.push_scalar(t_caret);
 
     /*
-      Use the Inner-Product argument to prove for the following statement:
-        `P = l * g_bold + r * (y_inv * h_bold), t_caret = <l, r>`
-      This avoids needing to transmit `l, r`.
+      Use the Inner-Product argument to prove `<l, r> = t_caret` for these generators. The opening
+      point is not an input: the verifier rebuilds it from the transcript.
     */
 
     // Protocol 1, inlined, since our `IpStatement` is for Protocol 2
 
     let ip_x = transcript.challenge::<C>();
-
-    let mut P_terms = Vec::with_capacity(1 + (2 * self.generators.len()));
-    debug_assert_eq!(l.len(), r.len());
-    for (i, (l, r)) in l.0.iter().zip(r.0.iter()).enumerate() {
-      P_terms.push((*l, self.generators.g_bold(i)));
-      P_terms.push((y_inv[i] * r, self.generators.h_bold(i)));
-    }
-
-    P_terms.push((ip_x * t_caret, self.generators.g()));
-    IpStatement::new(
-      self.generators,
-      y_inv,
-      ip_x,
-      // Safe since IpStatement isn't a ZK proof
-      P::Prover(multiexp_vartime(&P_terms)),
-    )
-    .expect("created an invalid IpStatement")
-    .prove(transcript, IpWitness::new(l, r).expect("created an invalid IpWitness"))
-    .map_err(|e| match e {
-      IpProveError::IncorrectAmountOfGenerators => AcProveError::IncorrectAmountOfGenerators,
-    })
+    IpStatement::new(self.generators, y_inv, ip_x)
+      .expect("created an invalid IpStatement")
+      .prove(transcript, IpWitness::new(l, r).expect("created an invalid IpWitness"))
+      .expect("the inner-product witness matches the generator vector");
+    Ok(())
   }
 }
 
@@ -810,11 +793,9 @@ where
     let ip_x = transcript.challenge::<C>();
     // `P` is amended with this additional term
     verifier.g += verifier_weight * ip_x * t_caret;
-    IpStatement::new(self.generators, y_inv, ip_x, P::Verifier { verifier_weight })
+    IpStatement::new(self.generators, y_inv, ip_x)
       .expect("created an invalid IpStatement")
-      .verify(verifier, transcript)
-      .map_err(|e| match e {
-        IpVerifyError::IncompleteProof => AcVerifyError::IncompleteProof,
-      })
+      .verify(verifier_weight, verifier, transcript)
+      .map_err(|IpVerifyError::IncompleteProof| AcVerifyError::IncompleteProof)
   }
 }

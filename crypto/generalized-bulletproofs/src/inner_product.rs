@@ -10,15 +10,12 @@ use ciphersuite::{
 
 use crate::{ScalarVector, PointVector, ProofGenerators, BatchVerifier, transcript::*};
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) enum P<C: Ciphersuite> {
-  Verifier { verifier_weight: C::F },
-  Prover(C::G),
-}
-
 /// The Bulletproofs Inner-Product statement.
 ///
-/// This is for usage with Protocol 2 from the Bulletproofs paper.
+/// This is for usage with Protocol 2 from the Bulletproofs paper. The opening point is not an
+/// input. The prover's transcript is a function of these generators, the `h` weights, `u`, and the
+/// witness. The verifier batches the opening and takes that batch weight as an argument to
+/// [`IpStatement::verify`].
 #[derive(Clone, Debug)]
 pub(crate) struct IpStatement<'a, C: Ciphersuite> {
   generators: ProofGenerators<'a, C>,
@@ -26,8 +23,6 @@ pub(crate) struct IpStatement<'a, C: Ciphersuite> {
   h_bold_weights: ScalarVector<C::F>,
   // u as the discrete logarithm of G
   u: C::F,
-  // P
-  P: P<C>,
 }
 
 /// The witness for the Bulletproofs Inner-Product statement.
@@ -76,7 +71,6 @@ where
     generators: ProofGenerators<'a, C>,
     h_bold_weights: ScalarVector<C::F>,
     u: C::F,
-    P: P<C>,
   ) -> Option<Self> {
     if generators.h_bold_slice().len() != h_bold_weights.len() {
       None?;
@@ -84,14 +78,17 @@ where
     if !generators.h_bold_slice().len().is_power_of_two() {
       None?;
     }
-    Some(Self { generators, h_bold_weights, u, P })
+    Some(Self { generators, h_bold_weights, u })
   }
 }
 
 /// An error from proving Inner-Product statements.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum IpProveError {
-  /// An incorrect amount of generators was provided.
+  /// The generator vector's length was not the witness length.
+  ///
+  /// Both lengths are powers of two. A longer generator vector is not extra capacity: each round
+  /// splits every vector in half, so a different length folds generators the witness does not have.
   IncorrectAmountOfGenerators,
 }
 
@@ -109,45 +106,20 @@ where
     transcript: &mut Transcript,
     witness: IpWitness<C>,
   ) -> Result<(), IpProveError> {
-    let (mut g_bold, mut h_bold, u, mut P, mut a, mut b) = {
-      let IpStatement { generators, h_bold_weights, u, P } = self;
-      let u = generators.g() * u;
+    let IpStatement { generators, h_bold_weights, u } = self;
+    // The base `u` in the paper. The statement stores its discrete log with respect to `g`.
+    let u = generators.g() * u;
 
-      // Ensure we have the necessary amount of generators
-      if witness.a.len() > ((usize::MAX >> 1) + 1) {
-        Err(IpProveError::IncorrectAmountOfGenerators)?;
-      }
-      if generators.g_bold_slice().len() < witness.a.len().next_power_of_two() {
-        Err(IpProveError::IncorrectAmountOfGenerators)?;
-      }
-      // Acquire a local copy of the generators
-      let g_bold = PointVector::<C>(generators.g_bold_slice().to_vec());
-      let h_bold = PointVector::<C>(generators.h_bold_slice().to_vec()).mul_vec(&h_bold_weights);
+    // `IpWitness::new` has already required a power-of-two length, so this comparison needs no
+    // rounding and cannot overflow.
+    if generators.len() != witness.a.len() {
+      Err(IpProveError::IncorrectAmountOfGenerators)?;
+    }
+    // Acquire a local copy of the generators
+    let mut g_bold = PointVector::<C>(generators.g_bold_slice().to_vec());
+    let mut h_bold = PointVector::<C>(generators.h_bold_slice().to_vec()).mul_vec(&h_bold_weights);
 
-      let IpWitness { a, b } = witness;
-
-      let P = match P {
-        P::Prover(point) => point,
-        P::Verifier { .. } => {
-          panic!("prove called with a P specification which was for the verifier")
-        }
-      };
-
-      // The arithmetic-circuit prover, this function's only caller, computes `P` from this
-      // witness, so a witness which doesn't open the statement is a bug in this crate, not an input
-      // to report
-      debug_assert!(
-        {
-          let ag = a.0.iter().copied().zip(g_bold.0.iter().copied());
-          let bh = b.0.iter().copied().zip(h_bold.0.iter().copied());
-          let cu = core::iter::once((a.inner_product(b.0.iter()), u));
-          P == multiexp_vartime(&ag.chain(bh).chain(cu).collect::<Vec<_>>())
-        },
-        "the inner-product witness doesn't open its statement"
-      );
-
-      (g_bold, h_bold, u, P, a, b)
-    };
+    let IpWitness { mut a, mut b } = witness;
 
     // `else: (n > 1)` case, lines 18-35 of the Bulletproofs paper
     // This interprets `g_bold.len()` as `n`
@@ -216,7 +188,6 @@ where
       for (a, b) in h_bold1.0.into_iter().zip(h_bold2.0) {
         h_bold.0.push(multiexp_vartime(&[(x, a), (x_inv, b)]));
       }
-      P = (L * (x * x)) + P + (R * (x_inv * x_inv));
 
       // 32-34
       a = a1 * x;
@@ -304,6 +275,9 @@ where
 
   /// Queue an Inner-Product proof for batch verification.
   ///
+  /// `verifier_weight` scales this proof's terms in the batch. The caller multiplies the opening
+  /// point by the same weight when it contributes that point to the batch.
+  ///
   /// This will return `Err(_)` if there is an error. This will return `Ok(_)` if the proof was
   /// successfully queued for batch verification. The caller is required to verify the batch in
   /// order to ensure the proof is actually correct.
@@ -311,6 +285,7 @@ where
   /// If this proof returns `Err(_)`, the BatchVerifier MUST be assumed corrupted and discarded.
   pub(crate) fn verify(
     self,
+    verifier_weight: C::F,
     verifier: &mut BatchVerifier<C>,
     transcript: &mut VerifierTranscript,
   ) -> Result<(), IpVerifyError> {
@@ -321,18 +296,13 @@ where
       verifier.h_bold.resize(self.generators.len(), C::F::ZERO);
     }
 
-    let IpStatement { generators, h_bold_weights, u, P } = self;
+    let IpStatement { generators, h_bold_weights, u } = self;
 
     // Calculate the discrete log w.r.t. 2 for the amount of generators present
     let mut lr_len = 0;
     while (1 << lr_len) < generators.g_bold_slice().len() {
       lr_len += 1;
     }
-
-    let weight = match P {
-      P::Prover(_) => panic!("prove called with a P specification which was for the prover"),
-      P::Verifier { verifier_weight } => verifier_weight,
-    };
 
     // Again, we start with the `else: (n > 1)` case
 
@@ -369,8 +339,8 @@ where
       let lr_iter = L.into_iter().zip(R);
       for ((x, x_inv), (L, R)) in x_iter.zip(lr_iter) {
         challenges.push((x, x_inv));
-        verifier.additional.push((weight * x.square(), L));
-        verifier.additional.push((weight * x_inv.square(), R));
+        verifier.additional.push((verifier_weight * x.square(), L));
+        verifier.additional.push((verifier_weight * x_inv.square(), R));
       }
 
       Self::challenge_products(&challenges)
@@ -388,15 +358,15 @@ where
     // The g_bold * a term case from line 16
     #[allow(clippy::needless_range_loop)]
     for i in 0 .. generators.g_bold_slice().len() {
-      verifier.g_bold[i] -= weight * product_cache[i] * a;
+      verifier.g_bold[i] -= verifier_weight * product_cache[i] * a;
     }
     // The h_bold * b term case from line 16
     for i in 0 .. generators.h_bold_slice().len() {
       verifier.h_bold[i] -=
-        weight * product_cache[product_cache.len() - 1 - i] * b * h_bold_weights[i];
+        verifier_weight * product_cache[product_cache.len() - 1 - i] * b * h_bold_weights[i];
     }
     // The c * u term case from line 16
-    verifier.g -= weight * c * u;
+    verifier.g -= verifier_weight * c * u;
 
     Ok(())
   }
