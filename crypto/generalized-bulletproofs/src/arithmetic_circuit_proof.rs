@@ -14,13 +14,12 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector, PointVector, ProofGenerators, PedersenCommitment, PedersenVectorCommitment,
-  BatchVerifier,
+  ScalarVector, PointVector, ProofGenerators, Openings, BatchVerifier,
   transcript::*,
   lincomb::accumulate_vector,
   inner_product::{IpVerifyError, IpStatement, IpWitness},
 };
-pub use crate::lincomb::{Variable, LinComb};
+pub use crate::lincomb::{Variable, LinComb, Assignment};
 
 /// An Arithmetic Circuit Statement.
 ///
@@ -49,32 +48,29 @@ impl<C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'_, C> {
   }
 }
 
-/// The witness for an arithmetic circuit statement.
+/// The witness for an arithmetic circuit statement: the multiplication rows and the openings of
+/// the statement's commitments.
+///
+/// Formed only by [`ArithmeticCircuitProver::new`], beside the statement it opens.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
+struct ArithmeticCircuitWitness<C: Ciphersuite> {
   aL: ScalarVector<C::F>,
   aR: ScalarVector<C::F>,
   aO: ScalarVector<C::F>,
 
-  c: Vec<PedersenVectorCommitment<C>>,
-  v: Vec<PedersenCommitment<C>>,
+  openings: Openings<C>,
 }
 
 impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
-  /// Construct a new witness instance.
-  ///
-  /// Returns `None` if `aL.len() != aR.len()`.
-  pub fn new(
+  /// Form the witness, padding an empty circuit to one zero multiplication so it still proves.
+  fn new(
     mut aL: Vec<C::F>,
     mut aR: Vec<C::F>,
-    c: Vec<PedersenVectorCommitment<C>>,
-    v: Vec<PedersenCommitment<C>>,
-  ) -> Option<Self> {
+    openings: Openings<C>,
+  ) -> Result<Self, AcProveError> {
     if aL.len() != aR.len() {
-      None?;
+      Err(AcProveError::UnequalMultiplicationRows)?;
     }
-    // If no IPA rows were used, pad to have a length of one
-    // This proof may be pointless, but it'll prove
     if aL.is_empty() {
       aL.push(C::F::ZERO);
       aR.push(C::F::ZERO);
@@ -84,7 +80,11 @@ impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
     let aR = ScalarVector::from(aR);
 
     let aO = aL.clone() * &aR;
-    Some(ArithmeticCircuitWitness { aL, aR, aO, c, v })
+    Ok(ArithmeticCircuitWitness { aL, aR, aO, openings })
+  }
+
+  fn assignment(&self) -> Assignment<'_, C> {
+    Assignment { aL: &self.aL.0, aR: &self.aR.0, openings: &self.openings }
   }
 }
 
@@ -185,11 +185,6 @@ where
   fn c(&self) -> usize {
     self.C.len()
   }
-
-  /// The amount of Pedersen commitments.
-  fn m(&self) -> usize {
-    self.V.len()
-  }
 }
 
 struct YzChallenges<C: Ciphersuite> {
@@ -220,17 +215,80 @@ where
   }
 }
 
-/// An error incurred when proving an arithmetic circuit statement.
+/// An error incurred when forming an [`ArithmeticCircuitProver`].
+///
+/// Every failure is found when the prover is formed; a formed prover always proves.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AcProveError {
-  /// An incorrect amount of generators was provided.
+  /// The statement could not be formed from the constraints and commitments.
+  Statement(AcStatementError),
+  /// A multiplication row, or a vector commitment's opening, is longer than the generators.
   IncorrectAmountOfGenerators,
-  /// The witness was inconsistent to the statement.
+  /// The multiplication rows `aL` and `aR` have different lengths.
+  UnequalMultiplicationRows,
+  /// A constraint does not evaluate to zero under the witness.
+  UnsatisfiedConstraint {
+    /// The constraint's position among the statement's constraints.
+    index: usize,
+  },
+}
+
+/// A statement and the witness which satisfies it, ready to prove.
+///
+/// Formed from the prover's transcripted commitments ([`ProverCommitments`]): the statement takes
+/// the commitments and the witness takes their openings, so a statement can never be proven over
+/// a witness which does not open it. Forming one checks every length and evaluates every
+/// constraint, in every build.
+#[derive(Clone, Debug)]
+pub struct ArithmeticCircuitProver<'a, C: Ciphersuite> {
+  statement: ArithmeticCircuitStatement<'a, C>,
+  witness: ArithmeticCircuitWitness<C>,
+}
+
+impl<'a, C: Ciphersuite> ArithmeticCircuitProver<'a, C>
+where
+  C::F: FromUniformBytes<64>,
+  C::G: ConditionallySelectable,
+{
+  /// Form the statement `constraints` over `commitments`, and the witness from the commitments'
+  /// openings and the multiplication rows `aL` and `aR`.
   ///
-  /// Sanity checks on the witness are always performed. This library may also check whether or not
-  /// the witness actually opens the statement (such as if `debug_assertions = on`), and if so, may
-  /// return this error if the witness is perceived as inconsistent with the statement.
-  InconsistentWitness,
+  /// `generators` must be those the commitments were made under ([`Openings::commit`]).
+  pub fn new(
+    generators: ProofGenerators<'a, C>,
+    constraints: Vec<LinComb<C::F>>,
+    commitments: ProverCommitments<C>,
+    aL: Vec<C::F>,
+    aR: Vec<C::F>,
+  ) -> Result<Self, AcProveError> {
+    let ProverCommitments { commitments, openings } = commitments;
+    let statement = ArithmeticCircuitStatement::new(generators, constraints, commitments)
+      .map_err(AcProveError::Statement)?;
+    let witness = ArithmeticCircuitWitness::new(aL, aR, openings)?;
+
+    let n = statement.n();
+    if (witness.aL.len() > n) ||
+      witness.openings.vector.iter().any(|opening| opening.g_values.len() > n)
+    {
+      Err(AcProveError::IncorrectAmountOfGenerators)?;
+    }
+
+    let assignment = witness.assignment();
+    if let Some(index) = statement
+      .constraints
+      .iter()
+      .position(|constraint| constraint.evaluate(&assignment) != C::F::ZERO)
+    {
+      Err(AcProveError::UnsatisfiedConstraint { index })?;
+    }
+
+    Ok(Self { statement, witness })
+  }
+
+  /// Prove the statement.
+  pub fn prove<R: RngCore + CryptoRng>(self, rng: &mut R, transcript: &mut Transcript) {
+    self.statement.prove(rng, transcript, &self.witness);
+  }
 }
 
 impl<C: Ciphersuite> ArithmeticCircuitStatement<'_, C>
@@ -238,102 +296,15 @@ where
   C::F: FromUniformBytes<64>,
   C::G: ConditionallySelectable,
 {
-  /// Prove for this statement/witness.
-  ///
-  /// This is only guaranteed to return a valid proof when the witness satisfies the statement. It
-  /// may or may not return an error if the witness does not satisfy the statement.
-  pub fn prove<R: RngCore + CryptoRng>(
+  /// Prove for this statement over a witness [`ArithmeticCircuitProver::new`] has checked.
+  fn prove<R: RngCore + CryptoRng>(
     self,
     rng: &mut R,
     transcript: &mut Transcript,
-    mut witness: ArithmeticCircuitWitness<C>,
-  ) -> Result<(), AcProveError> {
+    witness: &ArithmeticCircuitWitness<C>,
+  ) {
     let n = self.n();
     let c = self.c();
-    let m = self.m();
-
-    // Check the witness length
-    if witness.aL.len() > n {
-      Err(AcProveError::IncorrectAmountOfGenerators)?;
-    }
-    for c in &mut witness.c {
-      if c.g_values.len() > n {
-        Err(AcProveError::IncorrectAmountOfGenerators)?;
-      }
-    }
-
-    // Check the witness's consistency with the statement
-    if (c != witness.c.len()) || (m != witness.v.len()) {
-      Err(AcProveError::InconsistentWitness)?;
-    }
-
-    #[cfg(debug_assertions)]
-    {
-      for (commitment, opening) in self.V.0.iter().zip(witness.v.iter()) {
-        if *commitment != opening.commit(self.generators.g(), self.generators.h()) {
-          Err(AcProveError::InconsistentWitness)?;
-        }
-      }
-      for (commitment, opening) in self.C.0.iter().zip(witness.c.iter()) {
-        if Some(*commitment) != opening.commit(self.generators.g_bold_slice(), self.generators.h())
-        {
-          Err(AcProveError::InconsistentWitness)?;
-        }
-      }
-      for constraint in &self.constraints {
-        let eval = constraint
-          .WL
-          .iter()
-          .map(
-            |(i, weight)| {
-              if let Some(value) = witness.aL.0.get(*i) {
-                *weight * *value
-              } else {
-                C::F::ZERO
-              }
-            },
-          )
-          .chain(constraint.WR.iter().map(|(i, weight)| {
-            if let Some(value) = witness.aR.0.get(*i) {
-              *weight * *value
-            } else {
-              C::F::ZERO
-            }
-          }))
-          .chain(constraint.WO.iter().map(|(i, weight)| {
-            if let Some(value) = witness.aO.0.get(*i) {
-              *weight * *value
-            } else {
-              C::F::ZERO
-            }
-          }))
-          .chain(
-            witness
-              .c
-              .iter()
-              .enumerate()
-              .map(|(i, c)| {
-                (constraint.WCG().get(&i).into_iter().flat_map(|value| value.iter()), c)
-              })
-              .flat_map(|(weights, c)| {
-                weights.map(|(j, weight)| {
-                  if let Some(value) = c.g_values.get(*j) {
-                    *weight * value
-                  } else {
-                    C::F::ZERO
-                  }
-                })
-              }),
-          )
-          .chain(constraint.WV.iter().map(|(i, weight)| *weight * witness.v[*i].value))
-          .chain(core::iter::once(constraint.c))
-          .sum::<C::F>();
-
-        if eval != C::F::ZERO {
-          Err(AcProveError::InconsistentWitness)?;
-        }
-      }
-    }
 
     let alpha = C::F::random(&mut *rng);
     let beta = C::F::random(&mut *rng);
@@ -488,7 +459,7 @@ where
       coefficients of `r` decreasing from `ni` (skipping `jlr`).
     */
 
-    for (i, c) in witness.c.iter().enumerate() {
+    for (i, c) in witness.openings.vector.iter().enumerate() {
       let cg_weights = {
         let mut cg = ScalarVector::new(n);
         let mut cg_hi = 0;
@@ -573,7 +544,7 @@ where
     let tau_x = {
       let mut tau_x_poly = Vec::with_capacity(t.len() - (ni / 2));
       tau_x_poly.extend(tau_before_ni);
-      tau_x_poly.push(V_weights.inner_product(witness.v.iter().map(|v| &v.mask)));
+      tau_x_poly.push(V_weights.inner_product(witness.openings.scalar.iter().map(|v| &v.mask)));
       tau_x_poly.extend(tau_after_ni);
 
       let mut tau_x = C::F::ZERO;
@@ -589,7 +560,7 @@ where
       let mut mu = (alpha * x[ilr]) + (beta * x[io]) + (rho * x[is]);
 
       // Incorporate the commitment masks multiplied by the associated power of `x`
-      for (i, commitment) in witness.c.iter().enumerate() {
+      for (i, commitment) in witness.openings.vector.iter().enumerate() {
         let i = 1 + i;
         mu += x[ni - i] * commitment.mask;
       }
@@ -612,7 +583,6 @@ where
       .expect("created an invalid IpStatement")
       .prove(transcript, IpWitness::new(l, r).expect("created an invalid IpWitness"))
       .expect("the inner-product witness matches the generator vector");
-    Ok(())
   }
 }
 
