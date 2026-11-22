@@ -629,7 +629,6 @@ where
     .prove(transcript, IpWitness::new(l, r).expect("created an invalid IpWitness"))
     .map_err(|e| match e {
       IpProveError::IncorrectAmountOfGenerators => AcProveError::IncorrectAmountOfGenerators,
-      IpProveError::InconsistentWitness => AcProveError::InconsistentWitness,
     })
   }
 }

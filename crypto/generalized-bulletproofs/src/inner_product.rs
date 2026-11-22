@@ -93,12 +93,6 @@ where
 pub(crate) enum IpProveError {
   /// An incorrect amount of generators was provided.
   IncorrectAmountOfGenerators,
-  /// The witness was inconsistent to the statement.
-  ///
-  /// Sanity checks on the witness are always performed. This library may also check whether or not
-  /// the witness actually opens the statement (such as if `debug_assertions = on`), and if so, may
-  /// return this error if the witness is perceived as inconsistent with the statement.
-  InconsistentWitness,
 }
 
 impl<C: Ciphersuite> IpStatement<'_, C>
@@ -139,16 +133,18 @@ where
         }
       };
 
-      // Ensure this witness actually opens this statement
-      #[cfg(debug_assertions)]
-      {
-        let ag = a.0.iter().copied().zip(g_bold.0.iter().copied());
-        let bh = b.0.iter().copied().zip(h_bold.0.iter().copied());
-        let cu = core::iter::once((a.inner_product(b.0.iter()), u));
-        if P != multiexp_vartime(&ag.chain(bh).chain(cu).collect::<Vec<_>>()) {
-          Err(IpProveError::InconsistentWitness)?;
-        }
-      }
+      // The arithmetic-circuit prover, this function's only caller, computes `P` from this
+      // witness, so a witness which doesn't open the statement is a bug in this crate, not an input
+      // to report
+      debug_assert!(
+        {
+          let ag = a.0.iter().copied().zip(g_bold.0.iter().copied());
+          let bh = b.0.iter().copied().zip(h_bold.0.iter().copied());
+          let cu = core::iter::once((a.inner_product(b.0.iter()), u));
+          P == multiexp_vartime(&ag.chain(bh).chain(cu).collect::<Vec<_>>())
+        },
+        "the inner-product witness doesn't open its statement"
+      );
 
       (g_bold, h_bold, u, P, a, b)
     };

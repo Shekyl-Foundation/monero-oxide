@@ -54,6 +54,33 @@ fn test_zero_inner_product() {
   assert!(generators.verify(verifier));
 }
 
+// The prover asserts, in debug builds, that its witness opens its statement: the zero witness opens
+// only the identity, so a `P` of the generator must trip the assertion
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "the inner-product witness doesn't open its statement")]
+fn test_inner_product_witness_not_opening_the_statement() {
+  let P = <Ristretto as Ciphersuite>::G::generator();
+
+  let generators = insecure_test_generators::<_, Ristretto>(&mut OsRng, 1).unwrap();
+  let reduced = generators.reduce(1).unwrap();
+  let witness = IpWitness::<Ristretto>::new(
+    ScalarVector::<<Ristretto as Ciphersuite>::F>::new(1),
+    ScalarVector::<<Ristretto as Ciphersuite>::F>::new(1),
+  )
+  .unwrap();
+
+  let mut transcript = Transcript::new([0; 32]);
+  let _ = IpStatement::<Ristretto>::new(
+    reduced,
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE; 1]),
+    <Ristretto as Ciphersuite>::F::ONE,
+    P::Prover(P),
+  )
+  .unwrap()
+  .prove(&mut transcript, witness);
+}
+
 #[test]
 fn test_inner_product() {
   // P = sum(g_bold * a, h_bold * b)
