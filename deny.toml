@@ -6,7 +6,17 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 
 yanked = "deny"
 
-ignore = []
+ignore = [
+  # crypto-bigint 0.5.5: timing variability in operations meant to be
+  # constant-time (subtraction, zero counting, division, Montgomery
+  # multiplication). Patched only in 0.7.6, and the advisory names no
+  # functions, so it covers every 0.5.x. helioselene's field arithmetic is
+  # built on 0.5.5, the version Shekyl's constant-time harness audits
+  # (shekyl-core CRYPTO_AUDIT.md row CA-1); moving it is that audit's
+  # change, not a lockfile bump. Ignored by the maintainer's ruling of
+  # 2026-10-24, as in shekyl-core's rust/.cargo/audit.toml.
+  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 is the audited pin under helioselene (CA-1); ruled 2026-10-24" },
+]
 
 [licenses]
 version = 2
